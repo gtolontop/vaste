@@ -8,6 +8,7 @@ import { connectDB } from './src/config/database.js';
 // Route imports
 import authRoutes from './src/routes/auth.js';
 import serverRoutes from './src/routes/servers.js';
+import gameServerRoutes from './src/routes/gameServers.js';
 
 // Configuration
 dotenv.config();
@@ -82,6 +83,7 @@ app.get('/health', (req, res) => {
 // Routes API
 app.use('/api/auth', authRoutes);
 app.use('/api/servers', serverRoutes);
+app.use('/api/game-servers', gameServerRoutes);
 
 // Serve React app for all non-API routes
 app.get('*', (req, res) => {

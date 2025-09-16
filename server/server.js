@@ -1,7 +1,131 @@
 const WebSocket = require('ws');
 const { v4: uuidv4 } = require('uuid');
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
 const PORT = process.env.PORT || 25565;
+
+// License configuration
+const CONFIG_FILE = path.join(__dirname, 'server-config.json');
+let SERVER_CONFIG = {};
+
+// Load server configuration
+function loadConfig() {
+    try {
+        if (fs.existsSync(CONFIG_FILE)) {
+            SERVER_CONFIG = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
+        } else {
+            console.error('❌ server-config.json not found! Please create it with your license key.');
+            console.log('Example configuration:');
+            console.log(JSON.stringify({
+                license_key: 'vaste_your_license_key_here',
+                backend_url: 'http://localhost:8080',
+                server_name: 'My Game Server',
+                max_players: 20
+            }, null, 2));
+            process.exit(1);
+        }
+    } catch (error) {
+        console.error('❌ Error loading configuration:', error.message);
+        process.exit(1);
+    }
+}
+
+// Validate license with backend
+async function validateLicense() {
+    return new Promise((resolve, reject) => {
+        const data = JSON.stringify({
+            license_key: SERVER_CONFIG.license_key
+        });
+
+        const options = {
+            hostname: 'localhost',
+            port: 8080,
+            path: '/api/game-servers/validate-license',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+            }
+        };
+
+        const req = http.request(options, (res) => {
+            let responseData = '';
+
+            res.on('data', (chunk) => {
+                responseData += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(responseData);
+                    if (res.statusCode === 200 && result.valid) {
+                        resolve(result);
+                    } else {
+                        reject(new Error(result.error || 'License validation failed'));
+                    }
+                } catch (error) {
+                    reject(new Error('Invalid response from backend'));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(new Error(`Cannot connect to backend: ${error.message}`));
+        });
+
+        req.write(data);
+        req.end();
+    });
+}
+
+// Send heartbeat to backend
+async function sendHeartbeat(playerCount) {
+    return new Promise((resolve, reject) => {
+        const data = JSON.stringify({
+            license_key: SERVER_CONFIG.license_key,
+            current_players: playerCount
+        });
+
+        const options = {
+            hostname: 'localhost',
+            port: 8080,
+            path: '/api/game-servers/heartbeat',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+            }
+        };
+
+        const req = http.request(options, (res) => {
+            let responseData = '';
+
+            res.on('data', (chunk) => {
+                responseData += chunk;
+            });
+
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    resolve();
+                } else {
+                    reject(new Error('Heartbeat failed'));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            // Don't crash on heartbeat errors, just log them
+            console.warn('⚠️ Heartbeat failed:', error.message);
+            resolve();
+        });
+
+        req.write(data);
+        req.end();
+    });
+}
 
 // World configuration
 const WORLD_SIZE = 16;
@@ -261,14 +385,51 @@ class GameServer {
     }
 }
 
-// Start server
-const gameServer = new GameServer();
+// Initialize and start server
+async function startServer() {
+    try {
+        console.log('🔍 Loading server configuration...');
+        loadConfig();
 
-// Graceful shutdown
-process.on('SIGINT', () => {
-    console.log('\n[SERVER] Shutting down server...');
-    gameServer.wss.close(() => {
-        console.log('[SERVER] Server closed gracefully');
-        process.exit(0);
-    });
-});
+        console.log('🔐 Validating license with backend...');
+        const licenseInfo = await validateLicense();
+        console.log(`✅ License valid! Server: ${licenseInfo.server.name}`);
+        console.log(`📅 License expires: ${new Date(licenseInfo.server.license_expires_at).toLocaleDateString()}`);
+
+        console.log('🚀 Starting game server...');
+        const gameServer = new GameServer();
+
+        // Send periodic heartbeats to backend
+        setInterval(async () => {
+            try {
+                await sendHeartbeat(gameServer.players.size);
+            } catch (error) {
+                console.warn('⚠️ Failed to send heartbeat:', error.message);
+            }
+        }, 30000); // Every 30 seconds
+
+        console.log(`✅ Game server running on port ${PORT}`);
+        console.log(`📊 Max players: ${licenseInfo.server.max_players}`);
+        console.log(`🔑 License key: ${SERVER_CONFIG.license_key.substring(0, 16)}...`);
+
+        // Graceful shutdown
+        process.on('SIGINT', () => {
+            console.log('\n[SERVER] Shutting down server...');
+            gameServer.wss.close(() => {
+                console.log('[SERVER] Server closed gracefully');
+                process.exit(0);
+            });
+        });
+
+    } catch (error) {
+        console.error('❌ Failed to start server:', error.message);
+        console.log('\n💡 Make sure:');
+        console.log('   1. The backend server is running on http://localhost:8080');
+        console.log('   2. Your server-config.json has a valid license_key');
+        console.log('   3. Your license is active and not expired');
+        process.exit(1);
+    }
+}
+
+// Start the server
+startServer();

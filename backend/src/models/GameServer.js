@@ -1,5 +1,6 @@
 import { getDB } from '../config/database.js';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 export class GameServer {
   constructor(data) {
@@ -17,9 +18,17 @@ export class GameServer {
     this.owner_id = data.owner_id;
     this.version = data.version;
     this.tags = data.tags;
+    this.license_key = data.license_key;
+    this.license_expires_at = data.license_expires_at;
+    this.is_license_active = data.is_license_active;
     this.created_at = data.created_at;
     this.updated_at = data.updated_at;
     this.last_ping = data.last_ping;
+  }
+
+  // Generate a unique license key
+  static generateLicenseKey() {
+    return 'vaste_' + crypto.randomBytes(32).toString('hex');
   }
 
   // Create new game server
@@ -27,14 +36,19 @@ export class GameServer {
     const db = getDB();
     
     try {
-      // Generate unique UUID
+      // Generate unique UUID and license key
       const serverUuid = uuidv4();
+      const licenseKey = GameServer.generateLicenseKey();
+      
+      // License expires in 1 year by default
+      const licenseExpiresAt = new Date();
+      licenseExpiresAt.setFullYear(licenseExpiresAt.getFullYear() + 1);
 
       // Insert new server
       const [result] = await db.execute(
-        `INSERT INTO game_servers (uuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags, created_at, updated_at, is_online, current_players) 
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW(), 0, 0)`,
-        [serverUuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags]
+        `INSERT INTO game_servers (uuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags, license_key, license_expires_at, is_license_active, created_at, updated_at, is_online, current_players) 
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), 0, 0)`,
+        [serverUuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags, licenseKey, licenseExpiresAt]
       );
 
       // Get created server
@@ -80,6 +94,22 @@ export class GameServer {
     }
   }
 
+  // Find server by license key
+  static async findByLicenseKey(licenseKey) {
+    const db = getDB();
+    
+    try {
+      const [servers] = await db.execute(
+        'SELECT * FROM game_servers WHERE license_key = ?',
+        [licenseKey]
+      );
+
+      return servers.length > 0 ? new GameServer(servers[0]) : null;
+    } catch (error) {
+      throw error;
+    }
+  }
+
   // Find server by UUID
   static async findByUuid(uuid) {
     const db = getDB();
@@ -91,6 +121,77 @@ export class GameServer {
       );
 
       return servers.length > 0 ? new GameServer(servers[0]) : null;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Validate license key
+  static async validateLicense(licenseKey) {
+    const server = await GameServer.findByLicenseKey(licenseKey);
+    
+    if (!server) {
+      return { valid: false, error: 'License key not found' };
+    }
+
+    if (!server.is_license_active) {
+      return { valid: false, error: 'License is deactivated' };
+    }
+
+    if (new Date() > new Date(server.license_expires_at)) {
+      return { valid: false, error: 'License has expired' };
+    }
+
+    return { valid: true, server };
+  }
+
+  // Renew license (extend expiration by 1 year)
+  async renewLicense() {
+    const db = getDB();
+    
+    try {
+      const newExpiryDate = new Date();
+      newExpiryDate.setFullYear(newExpiryDate.getFullYear() + 1);
+
+      await db.execute(
+        'UPDATE game_servers SET license_expires_at = ?, updated_at = NOW() WHERE id = ?',
+        [newExpiryDate, this.id]
+      );
+
+      this.license_expires_at = newExpiryDate;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Deactivate license
+  async deactivateLicense() {
+    const db = getDB();
+    
+    try {
+      await db.execute(
+        'UPDATE game_servers SET is_license_active = 0, is_online = 0, updated_at = NOW() WHERE id = ?',
+        [this.id]
+      );
+
+      this.is_license_active = false;
+      this.is_online = false;
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Reactivate license
+  async reactivateLicense() {
+    const db = getDB();
+    
+    try {
+      await db.execute(
+        'UPDATE game_servers SET is_license_active = 1, updated_at = NOW() WHERE id = ?',
+        [this.id]
+      );
+
+      this.is_license_active = true;
     } catch (error) {
       throw error;
     }

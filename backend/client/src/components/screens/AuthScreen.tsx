@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { Button, Input } from '../ui';
+import ServerManagement from '../ServerManagement';
 
 interface AuthScreenProps {
   serverUrl: string;
@@ -19,6 +20,7 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
 }) => {
   const { state, login, register } = useAuth();
   const [isLogin, setIsLogin] = useState(true);
+  const [activeTab, setActiveTab] = useState<'play' | 'servers'>('play');
   const [formData, setFormData] = useState({
     username: '',
     email: '',
@@ -155,49 +157,93 @@ const AuthScreen: React.FC<AuthScreenProps> = ({
 
   // If user is authenticated, show game connection interface
   if (state.isAuthenticated && state.user) {
+    const tabStyles: React.CSSProperties = {
+      display: 'flex',
+      marginBottom: '24px',
+      borderBottom: '1px solid #333',
+    };
+
+    const tabButtonStyles = (active: boolean): React.CSSProperties => ({
+      flex: 1,
+      padding: '12px 20px',
+      background: 'none',
+      border: 'none',
+      color: active ? '#61dafb' : '#999',
+      cursor: 'pointer',
+      fontSize: '16px',
+      fontWeight: active ? '600' : '400',
+      borderBottom: active ? '2px solid #61dafb' : '2px solid transparent',
+      transition: 'all 0.2s ease',
+    });
+
+    const contentStyles: React.CSSProperties = {
+      minHeight: '400px',
+    };
+
     return (
       <div style={containerStyles}>
-        <div style={cardStyles}>
+        <div style={{ ...cardStyles, maxWidth: '800px', width: '90%' }}>
           <h1 style={titleStyles}>Welcome, {state.user.username}!</h1>
-          <p style={subtitleStyles}>Connect to a server to play</p>
+          <p style={subtitleStyles}>Manage your servers and play</p>
           
-          <div style={gameConnectionStyles}>
-            <h3 style={{ marginBottom: '16px', color: '#fff' }}>Server Connection</h3>
-            
-            {gameError && (
-              <div style={errorStyles}>
-                {gameError}
-              </div>
-            )}
-
-            <div style={{ marginBottom: '24px' }}>
-              <Input
-                label="Server URL"
-                value={serverUrl}
-                onChange={onServerUrlChange}
-                placeholder="ws://localhost:25565"
-                disabled={connecting}
-                fullWidth
-                type="url"
-              />
-            </div>
-
-            <Button
-              onClick={onConnect}
-              disabled={connecting || !serverUrl.trim()}
-              loading={connecting}
-              variant="primary"
-              size="large"
-              fullWidth
+          <div style={tabStyles}>
+            <button 
+              style={tabButtonStyles(activeTab === 'play')}
+              onClick={() => setActiveTab('play')}
             >
-              {connecting ? 'Connecting...' : 'Connect to Server'}
-            </Button>
+              Play Game
+            </button>
+            <button 
+              style={tabButtonStyles(activeTab === 'servers')}
+              onClick={() => setActiveTab('servers')}
+            >
+              My Servers
+            </button>
+          </div>
 
-            <div style={{ marginTop: '16px', fontSize: '12px', color: '#666', textAlign: 'center' }}>
-              <div>• WASD to move</div>
-              <div>• Mouse to look around</div>
-              <div>• Left click = break, Right click = place</div>
-            </div>
+          <div style={contentStyles}>
+            {activeTab === 'play' ? (
+              <div style={gameConnectionStyles}>
+                <h3 style={{ marginBottom: '16px', color: '#fff' }}>Server Connection</h3>
+                
+                {gameError && (
+                  <div style={errorStyles}>
+                    {gameError}
+                  </div>
+                )}
+
+                <div style={{ marginBottom: '24px' }}>
+                  <Input
+                    label="Server URL"
+                    value={serverUrl}
+                    onChange={onServerUrlChange}
+                    placeholder="ws://localhost:25565"
+                    disabled={connecting}
+                    fullWidth
+                    type="url"
+                  />
+                </div>
+
+                <Button
+                  onClick={onConnect}
+                  disabled={connecting || !serverUrl.trim()}
+                  loading={connecting}
+                  variant="primary"
+                  size="large"
+                  fullWidth
+                >
+                  {connecting ? 'Connecting...' : 'Connect to Server'}
+                </Button>
+
+                <div style={{ marginTop: '16px', fontSize: '12px', color: '#666', textAlign: 'center' }}>
+                  <div>• WASD to move</div>
+                  <div>• Mouse to look around</div>
+                  <div>• Left click = break, Right click = place</div>
+                </div>
+              </div>
+            ) : (
+              <ServerManagement />
+            )}
           </div>
         </div>
       </div>
