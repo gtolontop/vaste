@@ -192,7 +192,7 @@ const ServerListPage: React.FC = () => {
     left: 0,
     right: 0,
     height: '30px',
-    background: 'linear-gradient(rgba(26, 26, 26, 1), transparent)',
+    background: 'linear-gradient(rgba(18, 18, 18, 1), transparent)',
     pointerEvents: 'none',
     zIndex: 2,
   };
@@ -203,7 +203,7 @@ const ServerListPage: React.FC = () => {
     left: 0,
     right: 0,
     height: '30px',
-    background: 'linear-gradient(transparent, rgba(26, 26, 26, 1))',
+    background: 'linear-gradient(transparent, rgba(18, 18, 18, 1))',
     pointerEvents: 'none',
     zIndex: 2,
   };
