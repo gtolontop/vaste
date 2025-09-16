@@ -1,90 +1,40 @@
-import React, { useState } from 'react';
-import Game from './Game';
-import { NetworkManager } from './network';
-import { GameState } from './types';
-import { AuthScreen } from './components/screens';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
-import { LoadingScreen } from './components/ui';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './contexts/AuthContext';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import LandingPage from './pages/LandingPage';
+import ServerListPage from './pages/ServerListPage';
+import ServerDetailPage from './pages/ServerDetailPage';
+import LoginPage from './pages/LoginPage';
+import MyServersPage from './pages/MyServersPage';
+import GamePage from './pages/GamePage';
 
-// Main component with authentication
-const AppContent: React.FC = () => {
-  const { state: authState } = useAuth();
-  const [connected, setConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [serverUrl, setServerUrl] = useState('ws://localhost:25565');
-  const [networkManager, setNetworkManager] = useState<NetworkManager | null>(null);
-  const [error, setError] = useState<string>('');
-
-  // Handle game server connection
-  const handleConnect = async () => {
-    if (connecting) return;
-
-    setConnecting(true);
-    setError('');
-
-    try {
-      const manager = new NetworkManager(
-        (_gameState: GameState) => {
-          // State updates are handled within the Game component
-        },
-        (connectionState: boolean) => {
-          setConnected(connectionState);
-          if (!connectionState) {
-            setNetworkManager(null);
-          }
-        },
-        authState.user || undefined // Pass authenticated user information
-      );
-
-      await manager.connect(serverUrl);
-      setNetworkManager(manager);
-    } catch (err) {
-      setError('Failed to connect to server. Make sure the server is running.');
-      console.error('[CLIENT] Connection error:', err);
-    } finally {
-      setConnecting(false);
-    }
-  };
-
-  const handleDisconnect = () => {
-    if (networkManager) {
-      networkManager.disconnect();
-      setNetworkManager(null);
-    }
-    setConnected(false);
-  };
-
-  // Show loading screen while checking authentication
-  if (authState.isLoading) {
-    return <LoadingScreen message="Checking authentication..." />;
-  }
-
-  // Show auth screen if not authenticated or not connected to game
-  if (!authState.isAuthenticated || !authState.user || !connected || !networkManager) {
-    return (
-      <AuthScreen
-        serverUrl={serverUrl}
-        onServerUrlChange={setServerUrl}
-        onConnect={handleConnect}
-        connecting={connecting}
-        error={error}
-      />
-    );
-  }
-
-  return (
-    <Game 
-      networkManager={networkManager} 
-      onDisconnect={handleDisconnect}
-    />
-  );
-};
-
-// Main App component with authentication provider
 const App: React.FC = () => {
   return (
     <AuthProvider>
-      <AppContent />
+      <Router>
+        <div style={{ 
+          minHeight: '100vh', 
+          background: 'linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%)',
+          color: '#ffffff',
+          display: 'flex',
+          flexDirection: 'column'
+        }}>
+          <Navbar />
+          <main style={{ flex: 1 }}>
+            <Routes>
+              <Route path="/" element={<LandingPage />} />
+              <Route path="/servers" element={<ServerListPage />} />
+              <Route path="/servers/:id" element={<ServerDetailPage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/my-servers" element={<MyServersPage />} />
+              <Route path="/play/:serverUrl" element={<GamePage />} />
+            </Routes>
+          </main>
+          <Footer />
+        </div>
+      </Router>
     </AuthProvider>
   );
 };

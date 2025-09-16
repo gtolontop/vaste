@@ -37,17 +37,17 @@ cd backend
 call npm run build
 cd ..
 
+REM Start unified server (backend first for license checking)
+echo Starting unified server (backend + frontend) on port 8080...
+start "Vaste Unified Server" cmd /k "cd /d %~dp0backend && npm start"
+
+REM Wait for backend to start
+echo Waiting 5 seconds for backend to start...
+timeout /t 5 /nobreak > nul
+
 REM Start game server
 echo Starting game server on port 25565...
 start "Vaste Game Server" cmd /k "cd /d %~dp0server && node server.js"
-
-REM Wait for game server
-echo Waiting 3 seconds for game server to start...
-timeout /t 3 /nobreak > nul
-
-REM Start unified server
-echo Starting unified server (backend + frontend) on port 8080...
-start "Vaste Unified Server" cmd /k "cd /d %~dp0backend && npm start"
 
 echo.
 echo ====================================

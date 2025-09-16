@@ -420,15 +420,50 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
     onDisconnect();
   };
 
+  const handleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  };
+
+  const fullscreenButtonStyle: React.CSSProperties = {
+    position: 'absolute',
+    top: '1rem',
+    right: '1rem',
+    zIndex: 1000,
+    padding: '0.5rem',
+    background: 'rgba(0, 0, 0, 0.7)',
+    color: '#fff',
+    border: 'none',
+    borderRadius: '4px',
+    cursor: 'pointer',
+    fontSize: '1.2rem',
+    width: '40px',
+    height: '40px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+
   return (
-    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
       {!texturesLoaded && (
         <LoadingScreen message="Loading textures..." overlay />
       )}
       
+      <button 
+        style={fullscreenButtonStyle}
+        onClick={handleFullscreen}
+        title="Toggle Fullscreen"
+      >
+        ⛶
+      </button>
+      
       <Canvas
         camera={{ fov: 75, near: 0.1, far: 1000 }}
-        style={{ background: '#87CEEB' }}
+        style={{ background: '#87CEEB', width: '100%', height: '100%' }}
       >
         <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
       </Canvas>

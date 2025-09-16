@@ -63,13 +63,13 @@ export class GameServer {
     }
   }
 
-  // Get all public online servers
+  // Get all public servers (online and offline)
   static async getPublicServers() {
     const db = getDB();
     
     try {
       const [servers] = await db.execute(
-        'SELECT * FROM game_servers WHERE is_public = 1 AND is_online = 1 ORDER BY current_players DESC, created_at DESC'
+        'SELECT * FROM game_servers WHERE is_public = 1 ORDER BY is_online DESC, current_players DESC, created_at DESC'
       );
 
       return servers.map(server => new GameServer(server));
