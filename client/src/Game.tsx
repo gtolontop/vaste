@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { NetworkManager } from './network';
 import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
-import { LoadingScreen } from './components/ui';
+import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
 
 // Block component
@@ -41,9 +41,10 @@ const Player: React.FC<{ position: [number, number, number]; id: string; isCurre
 };
 
 // World component
-const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> = ({ 
+const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean }> = ({ 
   gameState, 
-  networkManager 
+  networkManager,
+  isPaused = false
 }) => {
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
@@ -64,6 +65,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
   // Keyboard event handlers
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (isPaused) return; // Don't handle movement keys when paused
+      
       switch (event.code) {
         case 'KeyW':
         case 'ArrowUp':
@@ -93,6 +96,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
+      if (isPaused) return; // Don't handle movement keys when paused
+      
       switch (event.code) {
         case 'KeyW':
         case 'ArrowUp':
@@ -127,7 +132,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
       document.removeEventListener('keydown', handleKeyDown);
       document.removeEventListener('keyup', handleKeyUp);
     };
-  }, []);
+  }, [isPaused]);
 
   // Handle mouse clicks for block interaction
   useEffect(() => {
@@ -135,7 +140,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
     const mouse = new THREE.Vector2();
 
     const handleClick = (event: MouseEvent) => {
-      if (!controlsRef.current?.isLocked) return;
+      if (!controlsRef.current?.isLocked || isPaused) return;
 
       // Calculate mouse position in normalized device coordinates
       mouse.x = 0; // Center of screen
@@ -243,11 +248,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
       gl.domElement.removeEventListener('mousedown', handleClick);
       gl.domElement.removeEventListener('contextmenu', (e) => e.preventDefault());
     };
-  }, [camera, gl, gameState.blocks, gameState.worldSize, networkManager]);
+  }, [camera, gl, gameState.blocks, gameState.worldSize, networkManager, isPaused]);
 
   // Track player movement
   useFrame((_, delta) => {
-    if (controlsRef.current?.isLocked) {
+    if (controlsRef.current?.isLocked && !isPaused) {
       const moveSpeed = 5.0; // blocks per second
       const actualMoveSpeed = moveSpeed * delta;
 
@@ -353,6 +358,23 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
 }) => {
   const [gameState, setGameState] = useState<GameState>(networkManager.getGameState());
   const [texturesLoaded, setTexturesLoaded] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+
+  // Handle Escape key for pause menu
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code === 'Escape') {
+        event.preventDefault();
+        setIsPaused(prev => !prev);
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   // Preload textures
   useEffect(() => {
@@ -389,6 +411,15 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
     return () => clearInterval(interval);
   }, [networkManager]);
 
+  const handleResume = () => {
+    setIsPaused(false);
+  };
+
+  const handleDisconnect = () => {
+    setIsPaused(false);
+    onDisconnect();
+  };
+
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       {!texturesLoaded && (
@@ -399,11 +430,18 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
         camera={{ fov: 75, near: 0.1, far: 1000 }}
         style={{ background: '#87CEEB' }}
       >
-        <World gameState={gameState} networkManager={networkManager} />
+        <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
       </Canvas>
       
       {/* Game HUD */}
-      <GameHUD gameState={gameState} onDisconnect={onDisconnect} />
+      <GameHUD gameState={gameState} />
+      
+      {/* Pause Menu */}
+      <PauseMenu
+        isOpen={isPaused}
+        onResume={handleResume}
+        onDisconnect={handleDisconnect}
+      />
     </div>
   );
 };

@@ -1,13 +1,11 @@
 import React from 'react';
-import { Button } from '../ui';
 import { GameState } from '../../types';
 
-export interface GameHUDProps {
+interface GameHUDProps {
   gameState: GameState;
-  onDisconnect: () => void;
 }
 
-const GameHUD: React.FC<GameHUDProps> = ({ gameState, onDisconnect }) => {
+const GameHUD: React.FC<GameHUDProps> = ({ gameState }) => {
   const hudContainerStyles: React.CSSProperties = {
     position: 'absolute',
     top: '16px',
@@ -28,13 +26,6 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onDisconnect }) => {
     pointerEvents: 'auto',
     maxWidth: '280px',
     boxShadow: '0 8px 32px rgba(0, 0, 0, 0.6)',
-  };
-
-  const disconnectButtonStyles: React.CSSProperties = {
-    position: 'absolute',
-    top: '16px',
-    right: '16px',
-    pointerEvents: 'auto',
   };
 
   const crosshairStyles: React.CSSProperties = {
@@ -107,17 +98,6 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onDisconnect }) => {
             </span>
           </div>
         </div>
-
-        {/* Disconnect Button */}
-        <div style={disconnectButtonStyles}>
-          <Button
-            onClick={onDisconnect}
-            variant="danger"
-            size="small"
-          >
-            Disconnect
-          </Button>
-        </div>
       </div>
 
       {/* Crosshair */}
@@ -128,7 +108,7 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState, onDisconnect }) => {
         <div style={{ marginBottom: '4px', color: '#fff', fontSize: '13px', fontWeight: '500' }}>
           Controls:
         </div>
-        <div>WASD: Move • Mouse: Look • Left Click: Break • Right Click: Place</div>
+        <div>WASD: Move • Mouse: Look • Left Click: Break • Right Click: Place • ESC: Menu</div>
       </div>
     </>
   );
