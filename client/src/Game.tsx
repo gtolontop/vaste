@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { NetworkManager } from './network';
 import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
+import { LoadingScreen } from './components/ui';
+import { GameHUD } from './components/screens';
 
 // Block component
 const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({ 
@@ -345,7 +347,10 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager }> 
 };
 
 // Main Game component
-const Game: React.FC<{ networkManager: NetworkManager }> = ({ networkManager }) => {
+const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void }> = ({ 
+  networkManager, 
+  onDisconnect 
+}) => {
   const [gameState, setGameState] = useState<GameState>(networkManager.getGameState());
   const [texturesLoaded, setTexturesLoaded] = useState(false);
 
@@ -353,14 +358,22 @@ const Game: React.FC<{ networkManager: NetworkManager }> = ({ networkManager }) 
   useEffect(() => {
     const loadTextures = async () => {
       const textureManager = TextureManager.getInstance();
+      const startTime = Date.now();
+      
       try {
         await textureManager.preloadTextures();
         console.log('Textures loaded successfully');
       } catch (error) {
         console.warn('Some textures failed to load, using fallback colors');
-      } finally {
-        setTexturesLoaded(true);
       }
+      
+      // Ensure minimum loading time of 1 second
+      const elapsedTime = Date.now() - startTime;
+      const remainingTime = Math.max(0, 1000 - elapsedTime);
+      
+      setTimeout(() => {
+        setTexturesLoaded(true);
+      }, remainingTime);
     };
 
     loadTextures();
@@ -379,19 +392,7 @@ const Game: React.FC<{ networkManager: NetworkManager }> = ({ networkManager }) 
   return (
     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
       {!texturesLoaded && (
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          background: 'rgba(0, 0, 0, 0.8)',
-          color: 'white',
-          padding: '20px',
-          borderRadius: '10px',
-          zIndex: 1000
-        }}>
-          Loading textures...
-        </div>
+        <LoadingScreen message="Loading textures..." overlay />
       )}
       
       <Canvas
@@ -401,49 +402,8 @@ const Game: React.FC<{ networkManager: NetworkManager }> = ({ networkManager }) 
         <World gameState={gameState} networkManager={networkManager} />
       </Canvas>
       
-      {/* UI Overlay */}
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
-        background: 'rgba(0, 0, 0, 0.7)',
-        color: 'white',
-        padding: '10px',
-        borderRadius: '5px',
-        fontSize: '14px'
-      }}>
-        <div>Players online: {gameState.players.size + (gameState.playerId ? 1 : 0)}</div>
-        <div>World size: {gameState.worldSize}x{gameState.worldSize}x{gameState.worldSize}</div>
-        <div>Blocks: {gameState.blocks.size}</div>
-        <div style={{ marginTop: '10px', fontSize: '12px' }}>
-          <div>Left click: Break block</div>
-          <div>Right click: Place block</div>
-          <div>WASD: Move</div>
-          <div>Mouse: Look around</div>
-        </div>
-      </div>
-
-      {/* Crosshair */}
-      <div style={{
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        transform: 'translate(-50%, -50%)',
-        width: '20px',
-        height: '20px',
-        pointerEvents: 'none'
-      }}>
-        <div style={{
-          position: 'absolute',
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: '2px',
-          height: '2px',
-          backgroundColor: 'white',
-          borderRadius: '50%'
-        }} />
-      </div>
+      {/* Game HUD */}
+      <GameHUD gameState={gameState} onDisconnect={onDisconnect} />
     </div>
   );
 };
