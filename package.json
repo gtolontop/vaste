@@ -1,0 +1,14 @@
+{
+  "name": "vaste",
+  "version": "1.0.0",
+  "description": "Multiplayer voxel game with React client and Node.js server",
+  "main": "index.js",
+  "scripts": {
+    "start:server": "cd server && node server.js",
+    "start:client": "cd client && npm run dev",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install"
+  },
+  "keywords": ["voxel", "multiplayer", "websocket", "react", "three.js", "game"],
+  "author": "",
+  "license": "MIT"
+}
