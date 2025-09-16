@@ -1,0 +1,150 @@
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import dotenv from 'dotenv';
+import { connectDB } from './src/config/database.js';
+
+// Route imports
+import authRoutes from './src/routes/auth.js';
+import serverRoutes from './src/routes/servers.js';
+
+// Configuration
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 8080;
+
+// Security middleware with custom CSP for WebSocket connections
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "ws://localhost:25565", "wss://localhost:25565", "ws:", "wss:"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      mediaSrc: ["'self'"],
+      frameSrc: ["'none'"],
+    },
+  },
+}));
+
+// CORS (only in development or if specified in env)
+if (process.env.NODE_ENV === 'development' || process.env.ALLOWED_ORIGINS) {
+  const corsOptions = {
+    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
+    credentials: true,
+    optionsSuccessStatus: 200
+  };
+  app.use(cors(corsOptions));
+}
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000, // 15 minutes
+  max: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS) || 100, // limite chaque IP à 100 requêtes par windowMs
+  message: {
+    success: false,
+    message: 'Trop de requêtes de cette IP, veuillez réessayer plus tard.'
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use(limiter);
+
+// Middleware to parse JSON
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Serve client static files in production
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve client build files
+app.use(express.static(path.join(__dirname, './client/dist')));
+
+// Route de santé
+app.get('/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Backend Vaste opérationnel',
+    timestamp: new Date().toISOString(),
+    version: '1.0.0'
+  });
+});
+
+// Routes API
+app.use('/api/auth', authRoutes);
+app.use('/api/servers', serverRoutes);
+
+// Serve React app for all non-API routes
+app.get('*', (req, res) => {
+  // Don't serve React app for API routes
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ success: false, message: 'API endpoint not found' });
+  }
+  
+  // Serve React app
+  res.sendFile(path.join(__dirname, './client/dist/index.html'));
+});
+
+// Route 404
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint non trouvé'
+  });
+});
+
+// Global error handling middleware
+app.use((error, req, res, next) => {
+  console.error('[SERVER] Unhandled error:', error);
+  
+  res.status(500).json({
+    success: false,
+    message: process.env.NODE_ENV === 'production' 
+      ? 'Internal server error' 
+      : error.message
+  });
+});
+
+// Server startup
+const startServer = async () => {
+  try {
+    // Database connection
+    await connectDB();
+    
+    // Start server
+    app.listen(PORT, () => {
+      console.log(`[SERVER] Backend Vaste started on port ${PORT}`);
+      console.log(`[SERVER] Environment: ${process.env.NODE_ENV || 'development'}`);
+      console.log(`[SERVER] Health check: http://localhost:${PORT}/health`);
+      console.log(`[SERVER] API Auth: http://localhost:${PORT}/api/auth`);
+      console.log(`[SERVER] API Servers: http://localhost:${PORT}/api/servers`);
+    });
+    
+  } catch (error) {
+    console.error('[SERVER] ❌ Startup error:', error.message);
+    process.exit(1);
+  }
+};
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  console.log('[SERVER] 🛑 SIGTERM signal received, shutting down server...');
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  console.log('[SERVER] 🛑 SIGINT signal received, shutting down server...');
+  process.exit(0);
+});
+
+// Start the server
+startServer();

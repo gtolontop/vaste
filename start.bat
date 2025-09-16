@@ -1,42 +1,67 @@
 @echo off
-echo Starting Vaste...
+echo ====================================
+echo        Vaste Unified Platform
+echo ====================================
 echo.
 
-echo Installing dependencies if needed...
+REM Kill any existing processes
+echo Cleaning up any existing processes...
+taskkill /F /IM node.exe 2>nul
+timeout /t 2 /nobreak > nul
+
+echo Installing dependencies...
 cd /d "%~dp0"
+
+REM Install unified backend+frontend dependencies
+echo Installing unified server dependencies...
+cd backend
+call npm install
+cd ..
+
+REM Install game server dependencies
 if not exist "server\node_modules" (
-    echo Installing server dependencies...
+    echo Installing game server dependencies...
     cd server
     call npm install
     cd ..
 )
 
-if not exist "client\node_modules" (
-    echo Installing client dependencies...
-    cd client
-    call npm install
-    cd ..
-)
-
 echo.
-echo Starting server on port 25565...
-start "Vaste Server" cmd /k "cd /d %~dp0server && node server.js"
+echo ====================================
+echo    Building and starting...
+echo ====================================
 
-echo.
-echo Waiting 3 seconds for server to start...
+REM Build frontend
+echo Building frontend...
+cd backend
+call npm run build
+cd ..
+
+REM Start game server
+echo Starting game server on port 25565...
+start "Vaste Game Server" cmd /k "cd /d %~dp0server && node server.js"
+
+REM Wait for game server
+echo Waiting 3 seconds for game server to start...
 timeout /t 3 /nobreak > nul
 
-echo.
-echo Starting client on http://localhost:3000...
-start "Vaste Client" cmd /k "cd /d %~dp0client && npm run dev"
+REM Start unified server
+echo Starting unified server (backend + frontend) on port 8080...
+start "Vaste Unified Server" cmd /k "cd /d %~dp0backend && npm start"
 
 echo.
-echo Both server and client are starting!
-echo Instructions:
-echo   1. Wait for client to open in your browser
-echo   2. Enter server URL: ws://localhost:25565
-echo   3. Click Connect
-echo   4. Enjoy the game!
+echo ====================================
+echo    Vaste Platform Started!
+echo ====================================
 echo.
-echo Press any key to close this window...
+echo Web App:     http://localhost:8080
+echo Game Server: ws://localhost:25565
+echo.
+echo Instructions:
+echo   1. Open http://localhost:8080 in your browser
+echo   2. Create an account or login
+echo   3. Enter server URL: ws://localhost:25565
+echo   4. Connect and play!
+echo.
+echo Press any key to close this launcher...
 pause > nul

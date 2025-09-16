@@ -2,15 +2,20 @@ import React, { useState } from 'react';
 import Game from './Game';
 import { NetworkManager } from './network';
 import { GameState } from './types';
-import { ConnectionScreen } from './components/screens';
+import { AuthScreen } from './components/screens';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { LoadingScreen } from './components/ui';
 
-const App: React.FC = () => {
+// Main component with authentication
+const AppContent: React.FC = () => {
+  const { state: authState } = useAuth();
   const [connected, setConnected] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [serverUrl, setServerUrl] = useState('ws://localhost:25565');
   const [networkManager, setNetworkManager] = useState<NetworkManager | null>(null);
   const [error, setError] = useState<string>('');
 
+  // Handle game server connection
   const handleConnect = async () => {
     if (connecting) return;
 
@@ -19,7 +24,7 @@ const App: React.FC = () => {
 
     try {
       const manager = new NetworkManager(
-        (state: GameState) => {
+        (_gameState: GameState) => {
           // State updates are handled within the Game component
         },
         (connectionState: boolean) => {
@@ -27,7 +32,8 @@ const App: React.FC = () => {
           if (!connectionState) {
             setNetworkManager(null);
           }
-        }
+        },
+        authState.user || undefined // Pass authenticated user information
       );
 
       await manager.connect(serverUrl);
@@ -48,9 +54,15 @@ const App: React.FC = () => {
     setConnected(false);
   };
 
-  if (!connected || !networkManager) {
+  // Show loading screen while checking authentication
+  if (authState.isLoading) {
+    return <LoadingScreen message="Checking authentication..." />;
+  }
+
+  // Show auth screen if not authenticated or not connected to game
+  if (!authState.isAuthenticated || !authState.user || !connected || !networkManager) {
     return (
-      <ConnectionScreen
+      <AuthScreen
         serverUrl={serverUrl}
         onServerUrlChange={setServerUrl}
         onConnect={handleConnect}
@@ -65,6 +77,15 @@ const App: React.FC = () => {
       networkManager={networkManager} 
       onDisconnect={handleDisconnect}
     />
+  );
+};
+
+// Main App component with authentication provider
+const App: React.FC = () => {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 };
 

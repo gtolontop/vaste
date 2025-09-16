@@ -44,7 +44,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
           marginBottom: '30px',
           letterSpacing: '0.5px',
         }}>
-          Jeu en pause
+          Game Paused
         </h2>
         
         <div style={{
@@ -61,7 +61,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
               fontWeight: '500',
             }}
           >
-            Reprendre le jeu
+            Resume Game
           </Button>
           
           <Button
@@ -83,7 +83,7 @@ export const PauseMenu: React.FC<PauseMenuProps> = ({
           marginTop: '20px',
           marginBottom: 0,
         }}>
-          Appuyez sur Échap pour reprendre
+          Press Esc to resume
         </p>
       </div>
     </div>

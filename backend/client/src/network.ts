@@ -1,14 +1,17 @@
 import { ClientMessage, ServerMessage, GameState, getBlockKey } from './types';
+import { User } from './services/auth.types';
 
 export class NetworkManager {
   private ws: WebSocket | null = null;
   private gameState: GameState;
   private onStateUpdate: (state: GameState) => void;
   private onConnectionChange: (connected: boolean) => void;
+  private authenticatedUser: User | null = null;
 
   constructor(
     onStateUpdate: (state: GameState) => void,
-    onConnectionChange: (connected: boolean) => void
+    onConnectionChange: (connected: boolean) => void,
+    user?: User
   ) {
     this.gameState = {
       playerId: null,
@@ -19,6 +22,7 @@ export class NetworkManager {
     };
     this.onStateUpdate = onStateUpdate;
     this.onConnectionChange = onConnectionChange;
+    this.authenticatedUser = user || null;
   }
 
   connect(serverUrl: string): Promise<void> {
@@ -28,6 +32,16 @@ export class NetworkManager {
 
         this.ws.onopen = () => {
           console.log('[CLIENT] Connected to server');
+          
+          // Send authentication info if available
+          if (this.authenticatedUser) {
+            this.sendMessage({
+              type: 'auth_info',
+              username: this.authenticatedUser.username,
+              uuid: this.authenticatedUser.uuid
+            } as any); // Temporaire jusqu'à ce qu'on mette à jour les types
+          }
+          
           this.gameState.connected = true;
           this.onConnectionChange(true);
           resolve();
