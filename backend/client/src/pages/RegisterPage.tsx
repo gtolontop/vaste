@@ -3,12 +3,14 @@ import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Button, Input } from '../components/ui';
 
-const LoginPage: React.FC = () => {
-  const { state, login } = useAuth();
+const RegisterPage: React.FC = () => {
+  const { state, register } = useAuth();
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
+    username: '',
     email: '',
-    password: ''
+    password: '',
+    confirmPassword: ''
   });
   const [authError, setAuthError] = useState('');
   const [authLoading, setAuthLoading] = useState(false);
@@ -107,12 +109,24 @@ const LoginPage: React.FC = () => {
   };
 
   const validateForm = () => {
+    if (!formData.username.trim()) {
+      setAuthError('Username is required');
+      return false;
+    }
     if (!formData.email.trim()) {
       setAuthError('Email is required');
       return false;
     }
     if (!formData.password) {
       setAuthError('Password is required');
+      return false;
+    }
+    if (formData.password !== formData.confirmPassword) {
+      setAuthError('Passwords do not match');
+      return false;
+    }
+    if (formData.password.length < 6) {
+      setAuthError('Password must be at least 6 characters long');
       return false;
     }
     return true;
@@ -126,13 +140,10 @@ const LoginPage: React.FC = () => {
     setAuthError('');
 
     try {
-      const result = await login(formData.email.trim(), formData.password);
-      if (!result.success) {
-        setAuthError(result.message || 'Login failed');
-      }
-      // Redirect will happen automatically via useEffect
+      await register(formData.username.trim(), formData.email.trim(), formData.password);
+      navigate('/');
     } catch (error: any) {
-      setAuthError(error.message || 'Login failed');
+      setAuthError(error.message || 'Registration failed');
     } finally {
       setAuthLoading(false);
     }
@@ -141,8 +152,8 @@ const LoginPage: React.FC = () => {
   return (
     <div style={containerStyles}>
       <div style={formContainerStyle}>
-        <h1 style={titleStyles}>Welcome Back</h1>
-        <p style={subtitleStyles}>Sign in to your Vaste account</p>
+        <h1 style={titleStyles}>Create Account</h1>
+        <p style={subtitleStyles}>Join Vaste to create and manage your game servers</p>
 
         {authError && (
           <div style={errorStyles}>
@@ -151,6 +162,25 @@ const LoginPage: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} style={formStyle}>
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Username</label>
+            <input
+              type="text"
+              value={formData.username}
+              onChange={(e) => handleInputChange('username', e.target.value)}
+              style={inputStyle}
+              placeholder="Enter your username"
+              onFocus={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+                e.target.style.background = 'rgba(255, 255, 255, 0.08)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                e.target.style.background = 'rgba(255, 255, 255, 0.05)';
+              }}
+            />
+          </div>
+
           <div style={fieldStyle}>
             <label style={labelStyle}>Email</label>
             <input
@@ -189,6 +219,25 @@ const LoginPage: React.FC = () => {
             />
           </div>
 
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Confirm Password</label>
+            <input
+              type="password"
+              value={formData.confirmPassword}
+              onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
+              style={inputStyle}
+              placeholder="Confirm your password"
+              onFocus={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+                e.target.style.background = 'rgba(255, 255, 255, 0.08)';
+              }}
+              onBlur={(e) => {
+                e.target.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+                e.target.style.background = 'rgba(255, 255, 255, 0.05)';
+              }}
+            />
+          </div>
+
           <Button
             variant="primary"
             onClick={() => {
@@ -198,14 +247,14 @@ const LoginPage: React.FC = () => {
             disabled={authLoading}
             style={{ width: '100%', marginTop: '1rem' }}
           >
-            {authLoading ? 'Signing in...' : 'Sign In'}
+            {authLoading ? 'Creating Account...' : 'Create Account'}
           </Button>
         </form>
 
         <div style={linkStyles}>
-          Don't have an account?{' '}
-          <Link to="/register" style={linkButtonStyles}>
-            Create one here
+          Already have an account?{' '}
+          <Link to="/login" style={linkButtonStyles}>
+            Sign in here
           </Link>
         </div>
       </div>
@@ -213,4 +262,4 @@ const LoginPage: React.FC = () => {
   );
 };
 
-export default LoginPage;
+export default RegisterPage;

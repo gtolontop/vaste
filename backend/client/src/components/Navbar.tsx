@@ -75,50 +75,71 @@ const Navbar: React.FC = () => {
   };
 
   const dropdownButtonStyle: React.CSSProperties = {
-    background: 'rgba(255, 255, 255, 0.1)',
-    border: '1px solid rgba(255, 255, 255, 0.2)',
-    borderRadius: '8px',
+    background: 'rgba(255, 255, 255, 0.08)',
+    border: '1px solid rgba(255, 255, 255, 0.15)',
+    borderRadius: '12px',
     color: '#ffffff',
-    padding: '0.5rem 1rem',
+    padding: '0.75rem 1rem',
     cursor: 'pointer',
     fontSize: '0.9rem',
     fontWeight: '500',
     display: 'flex',
     alignItems: 'center',
-    gap: '0.5rem',
+    gap: '0.75rem',
+    transition: 'all 0.2s ease',
+    backdropFilter: 'blur(10px)',
   };
 
   const dropdownMenuStyle: React.CSSProperties = {
     position: 'absolute',
     top: '100%',
     right: 0,
-    marginTop: '0.5rem',
-    background: 'rgba(20, 20, 20, 0.95)',
-    border: '1px solid rgba(255, 255, 255, 0.1)',
-    borderRadius: '8px',
-    padding: '0.5rem 0',
-    minWidth: '160px',
-    boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
-    backdropFilter: 'blur(10px)',
+    marginTop: '0.75rem',
+    background: 'rgba(15, 15, 15, 0.98)',
+    border: '1px solid rgba(255, 255, 255, 0.12)',
+    borderRadius: '16px',
+    padding: '0.75rem 0',
+    minWidth: '200px',
+    boxShadow: '0 12px 48px rgba(0, 0, 0, 0.6), 0 4px 16px rgba(0, 0, 0, 0.3)',
+    backdropFilter: 'blur(20px)',
+    overflow: 'hidden',
   };
 
   const dropdownItemStyle: React.CSSProperties = {
     display: 'block',
     width: '100%',
-    padding: '0.75rem 1rem',
+    padding: '0.875rem 1.25rem',
     color: '#ccc',
     textDecoration: 'none',
     fontSize: '0.9rem',
+    fontWeight: '500',
     background: 'none',
     border: 'none',
     textAlign: 'left',
     cursor: 'pointer',
-    transition: 'background-color 0.2s ease',
+    transition: 'all 0.2s ease',
+    position: 'relative',
   };
 
   const dropdownItemHoverStyle: React.CSSProperties = {
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     color: '#ffffff',
+    transform: 'translateX(4px)',
+  };
+
+  const dropdownSeparatorStyle: React.CSSProperties = {
+    height: '1px',
+    background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.1), transparent)',
+    margin: '0.5rem 1rem',
+  };
+
+  const dropdownHeaderStyle: React.CSSProperties = {
+    padding: '0.5rem 1.25rem 0.75rem',
+    color: '#888',
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
   };
 
   return (
@@ -140,11 +161,52 @@ const Navbar: React.FC = () => {
 
           <div style={dropdownContainerStyle} ref={dropdownRef}>
             <button
-              style={dropdownButtonStyle}
+              style={{
+                ...dropdownButtonStyle,
+                backgroundColor: dropdownOpen ? 'rgba(255, 255, 255, 0.12)' : 'rgba(255, 255, 255, 0.08)',
+                borderColor: dropdownOpen ? 'rgba(255, 255, 255, 0.25)' : 'rgba(255, 255, 255, 0.15)',
+              }}
               onClick={() => setDropdownOpen(!dropdownOpen)}
+              onMouseEnter={(e) => {
+                if (!dropdownOpen) {
+                  e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.12)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.25)';
+                }
+              }}
+              onMouseLeave={(e) => {
+                if (!dropdownOpen) {
+                  e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+                  e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.15)';
+                }
+              }}
             >
-              {state.isAuthenticated && state.user ? state.user.username : 'Guest'}
-              <span style={{ transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+              {state.isAuthenticated && state.user ? (
+                <>
+                  <span style={{ 
+                    width: '8px', 
+                    height: '8px', 
+                    backgroundColor: '#00ff88', 
+                    borderRadius: '50%',
+                    boxShadow: '0 0 8px rgba(0, 255, 136, 0.4)'
+                  }}></span>
+                  {state.user.username}
+                </>
+              ) : (
+                <>
+                  <span style={{ 
+                    width: '8px', 
+                    height: '8px', 
+                    backgroundColor: '#888', 
+                    borderRadius: '50%'
+                  }}></span>
+                  Guest
+                </>
+              )}
+              <span style={{ 
+                transform: dropdownOpen ? 'rotate(180deg)' : 'rotate(0deg)', 
+                transition: 'transform 0.2s ease',
+                fontSize: '0.7rem'
+              }}>
                 ▼
               </span>
             </button>
@@ -153,6 +215,7 @@ const Navbar: React.FC = () => {
               <div style={dropdownMenuStyle}>
                 {state.isAuthenticated && state.user ? (
                   <>
+                    <div style={dropdownHeaderStyle}>Account</div>
                     <Link
                       to="/my-servers"
                       style={dropdownItemStyle}
@@ -162,6 +225,16 @@ const Navbar: React.FC = () => {
                     >
                       My Servers
                     </Link>
+                    <Link
+                      to="/create-server"
+                      style={dropdownItemStyle}
+                      onClick={() => setDropdownOpen(false)}
+                      onMouseEnter={(e) => Object.assign(e.currentTarget.style, dropdownItemHoverStyle)}
+                      onMouseLeave={(e) => Object.assign(e.currentTarget.style, dropdownItemStyle)}
+                    >
+                      Create Server
+                    </Link>
+                    <div style={dropdownSeparatorStyle}></div>
                     <button
                       style={dropdownItemStyle}
                       onClick={handleLogout}
@@ -172,15 +245,27 @@ const Navbar: React.FC = () => {
                     </button>
                   </>
                 ) : (
-                  <Link
-                    to="/login"
-                    style={dropdownItemStyle}
-                    onClick={() => setDropdownOpen(false)}
-                    onMouseEnter={(e) => Object.assign(e.currentTarget.style, dropdownItemHoverStyle)}
-                    onMouseLeave={(e) => Object.assign(e.currentTarget.style, dropdownItemStyle)}
-                  >
-                    Login / Register
-                  </Link>
+                  <>
+                    <div style={dropdownHeaderStyle}>Authentication</div>
+                    <Link
+                      to="/login"
+                      style={dropdownItemStyle}
+                      onClick={() => setDropdownOpen(false)}
+                      onMouseEnter={(e) => Object.assign(e.currentTarget.style, dropdownItemHoverStyle)}
+                      onMouseLeave={(e) => Object.assign(e.currentTarget.style, dropdownItemStyle)}
+                    >
+                      Login
+                    </Link>
+                    <Link
+                      to="/register"
+                      style={dropdownItemStyle}
+                      onClick={() => setDropdownOpen(false)}
+                      onMouseEnter={(e) => Object.assign(e.currentTarget.style, dropdownItemHoverStyle)}
+                      onMouseLeave={(e) => Object.assign(e.currentTarget.style, dropdownItemStyle)}
+                    >
+                      Register
+                    </Link>
+                  </>
                 )}
               </div>
             )}
