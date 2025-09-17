@@ -7,6 +7,31 @@ const path = require('path');
 
 const PORT = process.env.PORT || 25565;
 
+// Logging utility
+function log(message, level = 'INFO') {
+    const timestamp = new Date().toLocaleString('fr-FR', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+    });
+    console.log(`[VASTE] ${timestamp} ${level}: ${message}`);
+}
+
+// ASCII Art for VASTE
+function showVasteAscii() {
+    console.log(`
+ ██╗   ██╗ █████╗ ███████╗████████╗███████╗
+ ██║   ██║██╔══██╗██╔════╝╚══██╔══╝██╔════╝
+ ██║   ██║███████║███████╗   ██║   █████╗  
+ ╚██╗ ██╔╝██╔══██║╚════██║   ██║   ██╔══╝  
+  ╚████╔╝ ██║  ██║███████║   ██║   ███████╗
+   ╚═══╝  ╚═╝  ╚═╝╚══════╝   ╚═╝   ╚══════╝
+    `);
+}
+
 // Backend configuration (hardcoded)
 const BACKEND_HOST = 'localhost';
 const BACKEND_PORT = 8080;
@@ -22,8 +47,8 @@ function loadConfig() {
         if (fs.existsSync(CONFIG_FILE)) {
             SERVER_CONFIG = JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8'));
         } else {
-            console.error('❌ server-config.json not found! Please create it with your license key.');
-            console.log('Example configuration:');
+            log('server-config.json not found! Please create it with your license key.', 'ERROR');
+            log('Example configuration:', 'INFO');
             console.log(JSON.stringify({
                 license_key: 'vaste_your_license_key_here',
                 max_players: 20
@@ -31,7 +56,7 @@ function loadConfig() {
             process.exit(1);
         }
     } catch (error) {
-        console.error('❌ Error loading configuration:', error.message);
+        log(`Error loading configuration: ${error.message}`, 'ERROR');
         process.exit(1);
     }
 }
@@ -121,7 +146,7 @@ async function sendHeartbeat(playerCount) {
 
         req.on('error', (error) => {
             // Don't crash on heartbeat errors, just log them
-            console.warn('⚠️ Heartbeat failed:', error.message);
+            log(`Heartbeat failed: ${error.message}`, 'WARN');
             resolve();
         });
 
@@ -191,11 +216,11 @@ class World {
     }
 
     generateWorld() {
-        // Generate a flat world with ground layer only
+        // Generate a flat world with stone ground
         for (let x = 0; x < WORLD_SIZE; x++) {
             for (let z = 0; z < WORLD_SIZE; z++) {
-                // Create only ground layer (y = 0)
-                this.setBlock(x, 0, z, 1);
+                this.setBlock(x, 0, z, 1); // Ground level
+                this.setBlock(x, 1, z, 1); // One layer above ground
             }
         }
     }
@@ -205,43 +230,43 @@ class World {
     }
 
     setBlock(x, y, z, blockType) {
-        const key = this.getBlockKey(x, y, z);
-        if (blockType === 0) {
-            delete this.blocks[key];
-        } else {
-            this.blocks[key] = blockType;
+        if (this.isValidPosition(x, y, z)) {
+            if (blockType === 0) {
+                delete this.blocks[this.getBlockKey(x, y, z)];
+            } else {
+                this.blocks[this.getBlockKey(x, y, z)] = blockType;
+            }
         }
     }
 
     getBlock(x, y, z) {
-        const key = this.getBlockKey(x, y, z);
-        return this.blocks[key] || 0;
+        if (!this.isValidPosition(x, y, z)) return 0;
+        return this.blocks[this.getBlockKey(x, y, z)] || 0;
     }
 
     isValidPosition(x, y, z) {
-        return x >= 0 && x < WORLD_SIZE && 
-               y >= 0 && y < WORLD_SIZE && 
+        return x >= 0 && x < WORLD_SIZE &&
+               y >= 0 && y < WORLD_SIZE &&
                z >= 0 && z < WORLD_SIZE;
     }
 
     getBlocksArray() {
-        const blocks = [];
-        for (const [key, blockType] of Object.entries(this.blocks)) {
+        return Object.keys(this.blocks).map(key => {
             const [x, y, z] = key.split(',').map(Number);
-            blocks.push({ x, y, z, type: blockType });
-        }
-        return blocks;
+            return { x, y, z, type: this.blocks[key] };
+        });
     }
 }
 
-// Player management
+// Game server
 class GameServer {
     constructor() {
-        this.world = new World();
         this.players = new Map();
+        this.world = new World();
+        
         this.wss = new WebSocket.Server({ port: PORT });
         
-        console.log(`[SERVER] Vaste server started on port ${PORT}`);
+        log(`Vaste server started on port ${PORT}`);
         this.setupWebSocketServer();
     }
 
@@ -259,7 +284,7 @@ class GameServer {
             };
             
             this.players.set(playerId, player);
-            console.log(`[SERVER] Player ${playerId} connected. Total players: ${this.players.size}`);
+            log(`Player ${playerId} connected. Total players: ${this.players.size}`);
 
             // Send initial world state
             this.sendToPlayer(playerId, {
@@ -270,21 +295,21 @@ class GameServer {
             });
 
             // Send existing players to new player
-            for (const [id, existingPlayer] of this.players) {
+            for (const [id, p] of this.players) {
                 if (id !== playerId) {
                     this.sendToPlayer(playerId, {
-                        type: 'player_update',
+                        type: 'player_joined',
                         id: id,
-                        x: existingPlayer.x,
-                        y: existingPlayer.y,
-                        z: existingPlayer.z
+                        x: p.x,
+                        y: p.y,
+                        z: p.z
                     });
                 }
             }
 
             // Notify other players about new player
             this.broadcastToOthers(playerId, {
-                type: 'player_update',
+                type: 'player_joined',
                 id: playerId,
                 x: player.x,
                 y: player.y,
@@ -297,14 +322,14 @@ class GameServer {
                     const message = JSON.parse(data);
                     this.handleMessage(playerId, message);
                 } catch (error) {
-                    console.error('[SERVER] Error parsing message:', error);
+                    log(`Error parsing message: ${error.message}`, 'ERROR');
                 }
             });
 
             // Handle disconnection
             ws.on('close', () => {
                 this.players.delete(playerId);
-                console.log(`[SERVER] Player ${playerId} disconnected. Total players: ${this.players.size}`);
+                log(`Player ${playerId} disconnected. Total players: ${this.players.size}`);
                 
                 // Notify other players
                 this.broadcastToOthers(playerId, {
@@ -314,15 +339,12 @@ class GameServer {
             });
 
             ws.on('error', (error) => {
-                console.error('[SERVER] WebSocket error:', error);
+                log(`WebSocket error: ${error.message}`, 'ERROR');
             });
         });
     }
 
     handleMessage(playerId, message) {
-        const player = this.players.get(playerId);
-        if (!player) return;
-
         switch (message.type) {
             case 'player_move':
                 this.handlePlayerMove(playerId, message);
@@ -334,46 +356,45 @@ class GameServer {
                 this.handlePlaceBlock(playerId, message);
                 break;
             default:
-                console.warn(`[SERVER] Unknown message type: ${message.type}`);
+                log(`Unknown message type: ${message.type}`, 'WARN');
         }
     }
 
     handlePlayerMove(playerId, message) {
         const player = this.players.get(playerId);
-        if (!player) return;
+        if (player) {
+            player.x = message.x;
+            player.y = message.y;
+            player.z = message.z;
 
-        // Update player position
-        player.x = message.x;
-        player.y = message.y;
-        player.z = message.z;
-
-        // Broadcast to other players
-        this.broadcastToOthers(playerId, {
-            type: 'player_update',
-            id: playerId,
-            x: message.x,
-            y: message.y,
-            z: message.z
-        });
+            // Broadcast to other players
+            this.broadcastToOthers(playerId, {
+                type: 'player_move',
+                id: playerId,
+                x: message.x,
+                y: message.y,
+                z: message.z
+            });
+        }
     }
 
     handleBreakBlock(playerId, message) {
         const { x, y, z } = message;
         
         if (!this.world.isValidPosition(x, y, z)) {
-            console.warn(`[SERVER] Invalid block position: ${x}, ${y}, ${z}`);
+            log(`Invalid block position: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
         // Check if block exists
         if (this.world.getBlock(x, y, z) === 0) {
-            console.warn(`[SERVER] No block to break at: ${x}, ${y}, ${z}`);
+            log(`No block to break at: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
         // Remove block
         this.world.setBlock(x, y, z, 0);
-        console.log(`[SERVER] Player ${playerId} broke block at (${x}, ${y}, ${z})`);
+        log(`Player ${playerId} broke block at (${x}, ${y}, ${z})`);
 
         // Broadcast block update
         this.broadcastToAll({
@@ -381,7 +402,8 @@ class GameServer {
             action: 'break',
             x: x,
             y: y,
-            z: z
+            z: z,
+            blockType: 0
         });
     }
 
@@ -389,19 +411,19 @@ class GameServer {
         const { x, y, z } = message;
         
         if (!this.world.isValidPosition(x, y, z)) {
-            console.warn(`[SERVER] Invalid block position: ${x}, ${y}, ${z}`);
+            log(`Invalid block position: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
         // Check if position is empty
         if (this.world.getBlock(x, y, z) !== 0) {
-            console.warn(`[SERVER] Block already exists at: ${x}, ${y}, ${z}`);
+            log(`Block already exists at: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
         // Place block (type 1 = stone)
         this.world.setBlock(x, y, z, 1);
-        console.log(`[SERVER] Player ${playerId} placed block at (${x}, ${y}, ${z})`);
+        log(`Player ${playerId} placed block at (${x}, ${y}, ${z})`);
 
         // Broadcast block update
         this.broadcastToAll({
@@ -441,19 +463,19 @@ class GameServer {
 // Initialize and start server
 async function startServer() {
     try {
-        console.log('🔍 Loading server configuration...');
+        log('Loading server configuration...');
         loadConfig();
 
-        console.log('🔐 Validating license with backend...');
+        log('Validating license with backend...');
         const licenseInfo = await validateLicense();
-        console.log(`✅ License valid! Server: ${licenseInfo.server.name}`);
-        console.log(`📅 License expires: ${new Date(licenseInfo.server.license_expires_at).toLocaleDateString()}`);
+        log(`License valid! Server: ${licenseInfo.server.name}`);
+        log(`License expires: ${new Date(licenseInfo.server.license_expires_at).toLocaleDateString()}`);
 
-        console.log('� Synchronizing server settings with backend...');
+        log('Synchronizing server settings with backend...');
         await syncServerSettings();
-        console.log('✅ Server settings synchronized');
+        log('Server settings synchronized');
 
-        console.log('�🚀 Starting game server...');
+        log('Starting game server...');
         const gameServer = new GameServer();
 
         // Send periodic heartbeats to backend
@@ -461,28 +483,30 @@ async function startServer() {
             try {
                 await sendHeartbeat(gameServer.players.size);
             } catch (error) {
-                console.warn('⚠️ Failed to send heartbeat:', error.message);
+                log(`Failed to send heartbeat: ${error.message}`, 'WARN');
             }
         }, 30000); // Every 30 seconds
 
-        console.log(`✅ Game server running on port ${PORT}`);
-        console.log(`📊 Max players: ${SERVER_CONFIG.max_players} (synced with backend)`);
-        console.log(`🏷️ Server name: ${licenseInfo.server.name}`);
-        console.log(`📝 Description: ${licenseInfo.server.description || 'No description'}`);
-        console.log(`🔑 License key: ${SERVER_CONFIG.license_key.substring(0, 16)}...`);
+        // Show ASCII art and final startup message
+        showVasteAscii();
+        log('Game server running on port ' + PORT);
+        log(`Max players: ${SERVER_CONFIG.max_players} (synced with backend)`);
+        log(`Server name: ${licenseInfo.server.name}`);
+        log(`Description: ${licenseInfo.server.description || 'No description'}`);
+        log(`License key: ${SERVER_CONFIG.license_key.substring(0, 16)}...`);
 
         // Graceful shutdown
         process.on('SIGINT', () => {
-            console.log('\n[SERVER] Shutting down server...');
+            log('Shutting down server...', 'INFO');
             gameServer.wss.close(() => {
-                console.log('[SERVER] Server closed gracefully');
+                log('Server closed gracefully', 'INFO');
                 process.exit(0);
             });
         });
 
     } catch (error) {
-        console.error('❌ Failed to start server:', error.message);
-        console.log('\n💡 Make sure:');
+        log(`Failed to start server: ${error.message}`, 'ERROR');
+        console.log('\nMake sure:');
         console.log('   1. The backend server is running on http://localhost:8080');
         console.log('   2. Your server-config.json has a valid license_key');
         console.log('   3. Your license is active and not expired');
