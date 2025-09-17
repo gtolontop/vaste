@@ -28,7 +28,7 @@ const LoginPage: React.FC = () => {
     justifyContent: 'center',
     alignItems: 'center',
     minHeight: 'calc(100vh - 80px)',
-    padding: '2rem',
+    padding: '1rem 2rem',
   };
 
   const cardStyles: React.CSSProperties = {

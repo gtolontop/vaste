@@ -121,7 +121,8 @@ const ServerListPage: React.FC = () => {
   const containerStyle: React.CSSProperties = {
     maxWidth: '1200px',
     margin: '0 auto',
-    padding: '2rem',
+    padding: '1rem 2rem',
+    width: '100%',
     height: 'calc(100vh - 160px)', // Fixed height for navbar and footer
     display: 'flex',
     flexDirection: 'column',
@@ -140,13 +141,12 @@ const ServerListPage: React.FC = () => {
     marginBottom: '1.5rem',
     flex: '0 0 auto',
     position: 'relative',
-    maxWidth: '500px',
-    margin: '0 auto 1.5rem auto',
+    width: '100%',
   };
 
   const searchInputStyle: React.CSSProperties = {
     width: '100%',
-    padding: '0.75rem 1rem 0.75rem 2.75rem',
+    padding: '0.75rem 1rem',
     background: 'rgba(255, 255, 255, 0.05)',
     border: '1px solid rgba(255, 255, 255, 0.2)',
     borderRadius: '8px',
@@ -155,16 +155,6 @@ const ServerListPage: React.FC = () => {
     outline: 'none',
     transition: 'all 0.2s ease',
     boxSizing: 'border-box' as const,
-  };
-
-  const searchIconStyle: React.CSSProperties = {
-    position: 'absolute',
-    left: '1rem',
-    top: '50%',
-    transform: 'translateY(-50%)',
-    color: 'rgba(255, 255, 255, 0.5)',
-    fontSize: '1.1rem',
-    pointerEvents: 'none',
   };
 
   const serversContainerStyle: React.CSSProperties = {
@@ -338,7 +328,6 @@ const ServerListPage: React.FC = () => {
       <h1 style={titleStyle}>Available Servers</h1>
 
       <div style={searchContainerStyle}>
-        <div style={searchIconStyle}>🔍</div>
         <input
           type="text"
           placeholder="Search servers..."

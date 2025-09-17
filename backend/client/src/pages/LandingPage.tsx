@@ -22,6 +22,7 @@ const LandingPage: React.FC = () => {
   const heroContainerStyle: React.CSSProperties = {
     maxWidth: '1200px',
     margin: '0 auto',
+    width: '100%',
   };
 
   const heroTitleStyle: React.CSSProperties = {
@@ -76,6 +77,7 @@ const LandingPage: React.FC = () => {
   const featuresContainerStyle: React.CSSProperties = {
     maxWidth: '1200px',
     margin: '0 auto',
+    width: '100%',
   };
 
   const featuresSectionTitleStyle: React.CSSProperties = {

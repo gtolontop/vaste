@@ -12,6 +12,7 @@ const Footer: React.FC = () => {
     maxWidth: '1200px',
     margin: '0 auto',
     padding: '0 2rem',
+    width: '100%',
     textAlign: 'center',
   };
 

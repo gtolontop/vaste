@@ -59,7 +59,8 @@ const ServerDetailPage: React.FC = () => {
   const containerStyle: React.CSSProperties = {
     maxWidth: '1200px',
     margin: '0 auto',
-    padding: '2rem',
+    padding: '1rem 2rem',
+    width: '100%',
   };
 
   const backLinkStyle: React.CSSProperties = {
