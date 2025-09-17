@@ -19,7 +19,8 @@ export class NetworkManager {
       players: new Map(),
       blocks: new Map(),
       worldSize: 16,
-      connected: false
+      connected: false,
+      playerPosition: null
     };
     this.onStateUpdate = onStateUpdate;
     this.onConnectionChange = onConnectionChange;
@@ -89,6 +90,15 @@ export class NetworkManager {
   sendMessage(message: ClientMessage) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
+      
+      // Track player position locally
+      if (message.type === 'player_move') {
+        this.gameState.playerPosition = {
+          x: message.x,
+          y: message.y,
+          z: message.z
+        };
+      }
     } else {
       console.warn('[CLIENT] Cannot send message: not connected');
     }
@@ -98,6 +108,9 @@ export class NetworkManager {
     switch (message.type) {
       case 'world_init':
         this.handleWorldInit(message);
+        break;
+      case 'chunks_update':
+        this.handleChunksUpdate(message);
         break;
       case 'block_update':
         this.handleBlockUpdate(message);
@@ -123,6 +136,18 @@ export class NetworkManager {
     this.gameState.blocks.clear();
 
     // Load blocks
+    message.blocks.forEach((block: any) => {
+      const key = getBlockKey(block.x, block.y, block.z);
+      this.gameState.blocks.set(key, block);
+    });
+
+    this.onStateUpdate({ ...this.gameState });
+  }
+
+  private handleChunksUpdate(message: any) {
+    console.log(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
+    
+    // Ajouter/mettre à jour les nouveaux blocs (ne pas clear la map existante)
     message.blocks.forEach((block: any) => {
       const key = getBlockKey(block.x, block.y, block.z);
       this.gameState.blocks.set(key, block);

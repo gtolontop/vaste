@@ -249,20 +249,19 @@ async function syncServerSettings() {
     });
 }
 
-// World configuration
-const WORLD_SIZE = 16;
-
 // World state - 3D array to store blocks (0 = air, 1 = stone)
 class World {
     constructor() {
         this.blocks = {};
+        this.minBounds = { x: 0, y: 0, z: 0 };
+        this.maxBounds = { x: 32, y: 32, z: 32 }; // Initial bounds, will expand dynamically
         this.generateWorld();
     }
 
     generateWorld() {
         // Generate a flat world with stone ground
-        for (let x = 0; x < WORLD_SIZE; x++) {
-            for (let z = 0; z < WORLD_SIZE; z++) {
+        for (let x = 0; x < 32; x++) {
+            for (let z = 0; z < 32; z++) {
                 this.setBlock(x, 0, z, 1); // Ground level
                 this.setBlock(x, 1, z, 1); // One layer above ground
             }
@@ -274,24 +273,95 @@ class World {
     }
 
     setBlock(x, y, z, blockType) {
-        if (this.isValidPosition(x, y, z)) {
+        // Allow reasonable bounds (e.g., -10000 to +10000 for each axis)
+        if (this.isReasonablePosition(x, y, z)) {
             if (blockType === 0) {
                 delete this.blocks[this.getBlockKey(x, y, z)];
             } else {
                 this.blocks[this.getBlockKey(x, y, z)] = blockType;
+                // Update world bounds dynamically
+                this.updateBounds(x, y, z);
             }
         }
     }
 
+    updateBounds(x, y, z) {
+        this.minBounds.x = Math.min(this.minBounds.x, x);
+        this.minBounds.y = Math.min(this.minBounds.y, y);
+        this.minBounds.z = Math.min(this.minBounds.z, z);
+        
+        this.maxBounds.x = Math.max(this.maxBounds.x, x + 1);
+        this.maxBounds.y = Math.max(this.maxBounds.y, y + 1);
+        this.maxBounds.z = Math.max(this.maxBounds.z, z + 1);
+    }
+
     getBlock(x, y, z) {
-        if (!this.isValidPosition(x, y, z)) return 0;
+        if (!this.isReasonablePosition(x, y, z)) return 0;
         return this.blocks[this.getBlockKey(x, y, z)] || 0;
     }
 
     isValidPosition(x, y, z) {
-        return x >= 0 && x < WORLD_SIZE &&
-               y >= 0 && y < WORLD_SIZE &&
-               z >= 0 && z < WORLD_SIZE;
+        // Check if position is within current world bounds
+        return x >= this.minBounds.x && x < this.maxBounds.x &&
+               y >= this.minBounds.y && y < this.maxBounds.y &&
+               z >= this.minBounds.z && z < this.maxBounds.z;
+    }
+
+    isReasonablePosition(x, y, z) {
+        // Check for reasonable bounds to prevent memory issues (±10000 blocks)
+        const MAX_COORD = 10000;
+        const MIN_COORD = -10000;
+        return x >= MIN_COORD && x <= MAX_COORD &&
+               y >= MIN_COORD && y <= MAX_COORD &&
+               z >= MIN_COORD && z <= MAX_COORD;
+    }
+
+    getWorldSize() {
+        // Return the current size of the world
+        return {
+            width: this.maxBounds.x - this.minBounds.x,
+            height: this.maxBounds.y - this.minBounds.y,
+            depth: this.maxBounds.z - this.minBounds.z,
+            minBounds: this.minBounds,
+            maxBounds: this.maxBounds
+        };
+    }
+
+    getBlocksInRange(centerX, centerY, centerZ, range) {
+        // Return only blocks within the specified range from the center position
+        // Optimized version that stops early when too many blocks are found
+        const blocks = [];
+        const maxBlocks = 50000; // Augmenté pour 10 chunks
+        
+        const minX = Math.floor(centerX - range);
+        const maxX = Math.ceil(centerX + range);
+        const minY = Math.floor(centerY - range);
+        const maxY = Math.ceil(centerY + range);
+        const minZ = Math.floor(centerZ - range);
+        const maxZ = Math.ceil(centerZ + range);
+
+        for (let x = minX; x <= maxX && blocks.length < maxBlocks; x++) {
+            for (let y = minY; y <= maxY && blocks.length < maxBlocks; y++) {
+                for (let z = minZ; z <= maxZ && blocks.length < maxBlocks; z++) {
+                    const blockType = this.getBlock(x, y, z);
+                    if (blockType !== 0) {
+                        // Calculate distance to center
+                        const distance = Math.sqrt(
+                            Math.pow(x - centerX, 2) +
+                            Math.pow(y - centerY, 2) +
+                            Math.pow(z - centerZ, 2)
+                        );
+                        
+                        if (distance <= range) {
+                            blocks.push({ x, y, z, type: blockType });
+                        }
+                    }
+                }
+            }
+        }
+        
+        console.log(`[WORLD] Sending ${blocks.length} blocks in range ${range} around (${centerX}, ${centerY}, ${centerZ})`);
+        return blocks;
     }
 
     getBlocksArray() {
@@ -387,12 +457,25 @@ class GameServer {
 
         // Get world state from mod system or fallback to default
         const modWorldState = this.modSystem.getWorldState();
+        const worldSize = this.world.getWorldSize();
+        
+        // Only send blocks near the player's spawn position for initial load
+        const playerChunkX = Math.floor(player.x / 16);
+        const playerChunkY = Math.floor(player.y / 16);
+        const playerChunkZ = Math.floor(player.z / 16);
+        const renderDistance = 4; // Same as client render distance
+        
+        const nearbyBlocks = this.getBlocksInRange(
+            player.x, player.y, player.z, 
+            renderDistance * 16 // Convert chunk distance to block distance
+        );
+        
         const worldState = modWorldState || {
-            blocks: this.world.getBlocksArray(),
-            worldSize: WORLD_SIZE
+            blocks: nearbyBlocks,
+            worldSize: worldSize
         };
 
-        // Send initial world state
+        // Send initial world state with only nearby blocks
         this.sendToPlayer(user.id, {
             type: 'world_init',
             playerId: user.id,
@@ -518,9 +601,20 @@ class GameServer {
     handlePlayerMove(playerId, message) {
         const player = this.players.get(playerId);
         if (player) {
+            const oldChunkX = Math.floor(player.x / 16);
+            const oldChunkZ = Math.floor(player.z / 16);
+            
             player.x = message.x;
             player.y = message.y;
             player.z = message.z;
+
+            const newChunkX = Math.floor(player.x / 16);
+            const newChunkZ = Math.floor(player.z / 16);
+            
+            // Si le joueur a changé de chunk, envoyer de nouveaux blocs
+            if (oldChunkX !== newChunkX || oldChunkZ !== newChunkZ) {
+                this.sendNearbyBlocks(playerId, player.x, player.y, player.z);
+            }
 
             // Broadcast to other players
             this.broadcastToOthers(playerId, {
@@ -536,8 +630,8 @@ class GameServer {
     handleBreakBlock(playerId, message) {
         const { x, y, z } = message;
         
-        if (!this.world.isValidPosition(x, y, z)) {
-            log(`Invalid block position: ${x}, ${y}, ${z}`, 'WARN');
+        if (!this.world.isReasonablePosition(x, y, z)) {
+            log(`Block position out of reasonable bounds: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
@@ -565,8 +659,8 @@ class GameServer {
     handlePlaceBlock(playerId, message) {
         const { x, y, z } = message;
         
-        if (!this.world.isValidPosition(x, y, z)) {
-            log(`Invalid block position: ${x}, ${y}, ${z}`, 'WARN');
+        if (!this.world.isReasonablePosition(x, y, z)) {
+            log(`Block position out of reasonable bounds: ${x}, ${y}, ${z}`, 'WARN');
             return;
         }
 
@@ -642,6 +736,25 @@ class GameServer {
                 player.ws.send(JSON.stringify(message));
             }
         }
+    }
+
+    getBlocksInRange(centerX, centerY, centerZ, range) {
+        return this.world.getBlocksInRange(centerX, centerY, centerZ, range);
+    }
+
+    sendNearbyBlocks(playerId, playerX, playerY, playerZ) {
+        // Distance étendue pour 10 chunks de rayon
+        const renderDistance = 10; 
+        const nearbyBlocks = this.getBlocksInRange(
+            playerX, playerY, playerZ, 
+            renderDistance * 16
+        );
+        
+        // Envoyer les nouveaux blocs au joueur
+        this.sendToPlayer(playerId, {
+            type: 'chunks_update',
+            blocks: nearbyBlocks
+        });
     }
 }
 

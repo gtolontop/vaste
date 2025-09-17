@@ -77,12 +77,20 @@ const GameHUD: React.FC<GameHUDProps> = ({ gameState }) => {
         {/* Stats Card */}
         <div style={statsCardStyles}>
           <div style={statRowStyles}>
+            <span style={statLabelStyles}>Position:</span>
+            <span style={statValueStyles}>
+              {gameState.playerPosition ? 
+                `${gameState.playerPosition.x.toFixed(1)}, ${gameState.playerPosition.y.toFixed(1)}, ${gameState.playerPosition.z.toFixed(1)}` 
+                : 'Unknown'}
+            </span>
+          </div>
+          <div style={statRowStyles}>
             <span style={statLabelStyles}>Players online:</span>
             <span style={statValueStyles}>{gameState.players.size + 1}</span>
           </div>
           <div style={statRowStyles}>
             <span style={statLabelStyles}>World size:</span>
-            <span style={statValueStyles}>{gameState.worldSize}³</span>
+            <span style={statValueStyles}>{typeof gameState.worldSize === 'number' ? gameState.worldSize : 'Dynamic'}³</span>
           </div>
           <div style={statRowStyles}>
             <span style={statLabelStyles}>Blocks:</span>

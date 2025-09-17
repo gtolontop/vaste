@@ -29,6 +29,11 @@ export interface WorldInitMessage {
   worldSize: number;
 }
 
+export interface ChunksUpdateMessage {
+  type: 'chunks_update';
+  blocks: Block[];
+}
+
 export interface BlockUpdateMessage {
   type: 'block_update';
   action: 'break' | 'place';
@@ -58,7 +63,7 @@ export interface TeleportMessage {
   z: number;
 }
 
-export type ServerMessage = WorldInitMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage | TeleportMessage;
+export type ServerMessage = WorldInitMessage | ChunksUpdateMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage | TeleportMessage;
 
 // Game state types
 export interface Block {
@@ -75,12 +80,27 @@ export interface Player {
   z: number;
 }
 
+export interface WorldBounds {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface WorldSize {
+  width: number;
+  height: number;
+  depth: number;
+  minBounds: WorldBounds;
+  maxBounds: WorldBounds;
+}
+
 export interface GameState {
   playerId: string | null;
   players: Map<string, Player>;
   blocks: Map<string, Block>;
-  worldSize: number;
+  worldSize: WorldSize | number; // Support both old and new format
   connected: boolean;
+  playerPosition: { x: number; y: number; z: number } | null;
 }
 
 // Helper function to create block key

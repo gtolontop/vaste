@@ -7,6 +7,8 @@ import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
 import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
+import { OptimizedWorld } from './components/OptimizedWorld';
+import { OptimizedRaycaster } from './utils/OptimizedRaycaster';
 
 // Block component
 const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({ 
@@ -48,6 +50,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
 }) => {
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
+  const [playerPosition, setPlayerPosition] = useState(new THREE.Vector3(0, 10, 0));
   
   // Movement state
   const moveState = useRef({
@@ -136,106 +139,57 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
 
   // Handle mouse clicks for block interaction
   useEffect(() => {
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
+    const optimizedRaycaster = new OptimizedRaycaster();
+
+    // Helper function to check if position is within reasonable bounds
+    const isReasonablePosition = (x: number, y: number, z: number) => {
+      const MAX_COORD = 10000;
+      const MIN_COORD = -10000;
+      return x >= MIN_COORD && x <= MAX_COORD &&
+             y >= MIN_COORD && y <= MAX_COORD &&
+             z >= MIN_COORD && z <= MAX_COORD;
+    };
 
     const handleClick = (event: MouseEvent) => {
       if (!controlsRef.current?.isLocked || isPaused) return;
 
-      // Calculate mouse position in normalized device coordinates
-      mouse.x = 0; // Center of screen
-      mouse.y = 0;
-
-      // Update raycaster
-      raycaster.setFromCamera(mouse, camera);
-
-      // Find all block positions
-      const blockPositions: { pos: THREE.Vector3; block: any }[] = [];
-      gameState.blocks.forEach((block) => {
-        blockPositions.push({
-          pos: new THREE.Vector3(block.x, block.y, block.z),
-          block: block
-        });
-      });
-
-      // Cast ray and find intersections
-      const intersections: { distance: number; point: THREE.Vector3; blockPos: THREE.Vector3; normal: THREE.Vector3 }[] = [];
+      // Utiliser le nouveau système de raycasting optimisé
+      const raycastResult = optimizedRaycaster.raycastBlocks(camera, gameState.blocks, playerPosition, 8);
       
-      for (const { pos } of blockPositions) {
-        const blockBox = new THREE.Box3(
-          new THREE.Vector3(pos.x - 0.5, pos.y - 0.5, pos.z - 0.5),
-          new THREE.Vector3(pos.x + 0.5, pos.y + 0.5, pos.z + 0.5)
-        );
+      if (!raycastResult) return;
 
-        const intersectPoint = new THREE.Vector3();
-        if (raycaster.ray.intersectBox(blockBox, intersectPoint)) {
-          const distance = camera.position.distanceTo(intersectPoint);
-          
-          // Calculate normal by finding which face was hit
-          const center = new THREE.Vector3(pos.x, pos.y, pos.z);
-          const localPoint = intersectPoint.clone().sub(center);
-          
-          // Find the face with the largest component
-          const absX = Math.abs(localPoint.x);
-          const absY = Math.abs(localPoint.y);
-          const absZ = Math.abs(localPoint.z);
-          
-          let normal = new THREE.Vector3();
-          if (absX > absY && absX > absZ) {
-            normal.set(Math.sign(localPoint.x), 0, 0);
-          } else if (absY > absZ) {
-            normal.set(0, Math.sign(localPoint.y), 0);
-          } else {
-            normal.set(0, 0, Math.sign(localPoint.z));
-          }
+      const blockX = Math.round(raycastResult.blockPos.x);
+      const blockY = Math.round(raycastResult.blockPos.y);
+      const blockZ = Math.round(raycastResult.blockPos.z);
 
-          intersections.push({
-            distance: distance,
-            point: intersectPoint,
-            blockPos: pos.clone(),
-            normal: normal
-          });
-        }
-      }
-
-      if (intersections.length > 0) {
-        // Find closest intersection
-        intersections.sort((a, b) => a.distance - b.distance);
-        const closest = intersections[0];
-
-        const blockX = Math.round(closest.blockPos.x);
-        const blockY = Math.round(closest.blockPos.y);
-        const blockZ = Math.round(closest.blockPos.z);
-
-        if (event.button === 0) {
-          // Left click - break block
+      if (event.button === 0) {
+        // Left click - break block
+        // Check reasonable bounds before sending to server
+        if (isReasonablePosition(blockX, blockY, blockZ)) {
           networkManager.sendMessage({
             type: 'break_block',
             x: blockX,
             y: blockY,
             z: blockZ
           });
-        } else if (event.button === 2) {
-          // Right click - place block adjacent to the hit face
-          const placeX = blockX + Math.round(closest.normal.x);
-          const placeY = blockY + Math.round(closest.normal.y);
-          const placeZ = blockZ + Math.round(closest.normal.z);
+        }
+      } else if (event.button === 2) {
+        // Right click - place block adjacent to the hit face
+        const placeX = blockX + Math.round(raycastResult.normal.x);
+        const placeY = blockY + Math.round(raycastResult.normal.y);
+        const placeZ = blockZ + Math.round(raycastResult.normal.z);
 
-          // Check bounds
-          if (placeX >= 0 && placeX < gameState.worldSize &&
-              placeY >= 0 && placeY < gameState.worldSize &&
-              placeZ >= 0 && placeZ < gameState.worldSize) {
-            
-            // Check if position is not already occupied
-            const existingBlockKey = getBlockKey(placeX, placeY, placeZ);
-            if (!gameState.blocks.has(existingBlockKey)) {
-              networkManager.sendMessage({
-                type: 'place_block',
-                x: placeX,
-                y: placeY,
-                z: placeZ
-              });
-            }
+        // Check reasonable bounds
+        if (isReasonablePosition(placeX, placeY, placeZ)) {
+          // Check if position is not already occupied
+          const existingBlockKey = getBlockKey(placeX, placeY, placeZ);
+          if (!gameState.blocks.has(existingBlockKey)) {
+            networkManager.sendMessage({
+              type: 'place_block',
+              x: placeX,
+              y: placeY,
+              z: placeZ
+            });
           }
         }
       }
@@ -246,9 +200,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
 
     return () => {
       gl.domElement.removeEventListener('mousedown', handleClick);
-      gl.domElement.removeEventListener('contextmenu', (e) => e.preventDefault());
     };
-  }, [camera, gl, gameState.blocks, gameState.worldSize, networkManager, isPaused]);
+  }, [camera, gl, gameState.blocks, networkManager, isPaused, playerPosition]);
 
   // Track player movement
   useFrame((_, delta) => {
@@ -292,11 +245,12 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         camera.position.add(velocity.current);
 
         // Update player position tracking
-        const newPos = {
-          x: camera.position.x,
-          y: camera.position.y,
-          z: camera.position.z
-        };
+        const newPos = new THREE.Vector3(
+          camera.position.x,
+          camera.position.y,
+          camera.position.z
+        );
+        setPlayerPosition(newPos);
 
         // Send movement update to server
         networkManager.sendMessage({
@@ -312,12 +266,14 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
   // Set initial camera position
   useEffect(() => {
     camera.position.set(8, 10, 8);
+    setPlayerPosition(new THREE.Vector3(8, 10, 8));
   }, [camera]);
 
   // Setup teleport handler
   useEffect(() => {
     networkManager.onTeleport = (x: number, y: number, z: number) => {
       camera.position.set(x, y, z);
+      setPlayerPosition(new THREE.Vector3(x, y, z));
     };
     
     return () => {
@@ -334,14 +290,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       {/* Controls */}
       <PointerLockControls ref={controlsRef} />
 
-      {/* Render blocks */}
-      {Array.from(gameState.blocks.values()).map((block) => (
-        <Block
-          key={getBlockKey(block.x, block.y, block.z)}
-          position={[block.x, block.y, block.z]}
-          blockType={block.type}
-        />
-      ))}
+      {/* Render optimized world */}
+      <OptimizedWorld 
+        blocks={gameState.blocks}
+        playerPosition={playerPosition}
+      />
 
       {/* Render other players */}
       {Array.from(gameState.players.values()).map((player) => (
@@ -352,12 +305,6 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
           isCurrentPlayer={player.id === gameState.playerId}
         />
       ))}
-
-      {/* Ground plane for reference */}
-      <mesh position={[gameState.worldSize / 2 - 0.5, -0.5, gameState.worldSize / 2 - 0.5]} rotation={[-Math.PI / 2, 0, 0]}>
-        <planeGeometry args={[gameState.worldSize, gameState.worldSize]} />
-        <meshLambertMaterial color="#2F4F2F" transparent opacity={0.3} />
-      </mesh>
     </>
   );
 };
