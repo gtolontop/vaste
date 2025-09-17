@@ -8,6 +8,7 @@ import { TextureManager } from './TextureManager';
 import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
 import { OptimizedWorld } from './components/OptimizedWorld';
+import BlockOutline from './components/BlockOutline';
 import { OptimizedRaycaster } from './utils/OptimizedRaycaster';
 
 // Block component
@@ -51,6 +52,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
   const [playerPosition, setPlayerPosition] = useState(new THREE.Vector3(0, 10, 0));
+  // Bloc visé (pour l'outline)
+  const [targetedBlock, setTargetedBlock] = useState<THREE.Vector3 | null>(null);
   
   // Movement state
   const moveState = useRef({
@@ -137,7 +140,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
     };
   }, [isPaused]);
 
-  // Handle mouse clicks for block interaction
+  // Handle mouse clicks for block interaction & update targeted block for outline
   useEffect(() => {
     const optimizedRaycaster = new OptimizedRaycaster();
 
@@ -150,21 +153,34 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
              z >= MIN_COORD && z <= MAX_COORD;
     };
 
+    // Pour l'outline : update à chaque frame
+    let animationFrameId: number;
+    const updateTargetedBlock = () => {
+      if (!controlsRef.current?.isLocked || isPaused) {
+        setTargetedBlock(null);
+        animationFrameId = requestAnimationFrame(updateTargetedBlock);
+        return;
+      }
+      const raycastResult = optimizedRaycaster.raycastBlocks(camera, gameState.blocks, playerPosition, 8);
+      if (raycastResult) {
+        setTargetedBlock(raycastResult.blockPos.clone());
+      } else {
+        setTargetedBlock(null);
+      }
+      animationFrameId = requestAnimationFrame(updateTargetedBlock);
+    };
+    updateTargetedBlock();
+
+    // Click interaction
     const handleClick = (event: MouseEvent) => {
       if (!controlsRef.current?.isLocked || isPaused) return;
-
-      // Utiliser le nouveau système de raycasting optimisé
       const raycastResult = optimizedRaycaster.raycastBlocks(camera, gameState.blocks, playerPosition, 8);
-      
       if (!raycastResult) return;
-
       const blockX = Math.round(raycastResult.blockPos.x);
       const blockY = Math.round(raycastResult.blockPos.y);
       const blockZ = Math.round(raycastResult.blockPos.z);
-
       if (event.button === 0) {
         // Left click - break block
-        // Check reasonable bounds before sending to server
         if (isReasonablePosition(blockX, blockY, blockZ)) {
           networkManager.sendMessage({
             type: 'break_block',
@@ -178,10 +194,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         const placeX = blockX + Math.round(raycastResult.normal.x);
         const placeY = blockY + Math.round(raycastResult.normal.y);
         const placeZ = blockZ + Math.round(raycastResult.normal.z);
-
-        // Check reasonable bounds
         if (isReasonablePosition(placeX, placeY, placeZ)) {
-          // Check if position is not already occupied
           const existingBlockKey = getBlockKey(placeX, placeY, placeZ);
           if (!gameState.blocks.has(existingBlockKey)) {
             networkManager.sendMessage({
@@ -194,12 +207,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         }
       }
     };
-
     gl.domElement.addEventListener('mousedown', handleClick);
     gl.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
-
     return () => {
       gl.domElement.removeEventListener('mousedown', handleClick);
+      cancelAnimationFrame(animationFrameId);
     };
   }, [camera, gl, gameState.blocks, networkManager, isPaused, playerPosition]);
 
@@ -290,11 +302,17 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       {/* Controls */}
       <PointerLockControls ref={controlsRef} />
 
+
       {/* Render optimized world */}
       <OptimizedWorld 
         blocks={gameState.blocks}
         playerPosition={playerPosition}
       />
+
+      {/* Outline du bloc visé */}
+      {targetedBlock && (
+        <BlockOutline position={[targetedBlock.x, targetedBlock.y, targetedBlock.z]} color="#ffffff" />
+      )}
 
       {/* Render other players */}
       {Array.from(gameState.players.values()).map((player) => (
