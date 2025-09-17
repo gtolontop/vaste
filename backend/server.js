@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
@@ -32,16 +31,6 @@ app.use(helmet({
     },
   },
 }));
-
-// CORS (only in development or if specified in env)
-if (process.env.NODE_ENV === 'development' || process.env.ALLOWED_ORIGINS) {
-  const corsOptions = {
-    origin: process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : ['http://localhost:3000', 'http://localhost:3001', 'http://localhost:5173'],
-    credentials: true,
-    optionsSuccessStatus: 200
-  };
-  app.use(cors(corsOptions));
-}
 
 // Rate limiting
 const limiter = rateLimit({

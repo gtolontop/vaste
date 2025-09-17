@@ -159,7 +159,6 @@ Update server status (for game servers).
 - **JWT**: Token-based authentication
 - **bcrypt**: Secure password hashing
 - **Helmet**: HTTP security headers
-- **CORS**: Cross-origin configuration
 - **Rate limiting**: Request rate limiting
 - **Validation**: Strict input validation
 
@@ -219,7 +218,6 @@ PORT=8080
 DB_HOST=your-production-db-host
 DB_NAME=vaste_backend
 JWT_SECRET=your-very-secure-production-secret
-ALLOWED_ORIGINS=https://yourdomain.com
 ```
 
 ### Available Scripts
