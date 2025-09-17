@@ -6,6 +6,7 @@ export class NetworkManager {
   private gameState: GameState;
   private onStateUpdate: (state: GameState) => void;
   private onConnectionChange: (connected: boolean) => void;
+  public onTeleport?: (x: number, y: number, z: number) => void;
   private authenticatedUser: User | null = null;
 
   constructor(
@@ -107,6 +108,9 @@ export class NetworkManager {
       case 'player_disconnect':
         this.handlePlayerDisconnect(message);
         break;
+      case 'teleport':
+        this.handleTeleport(message);
+        break;
       default:
         console.warn('[CLIENT] Unknown server message type:', (message as any).type);
     }
@@ -167,6 +171,13 @@ export class NetworkManager {
     this.gameState.players.delete(message.id);
     console.log(`[CLIENT] Player ${message.id} left`);
     this.onStateUpdate({ ...this.gameState });
+  }
+
+  private handleTeleport(message: any) {
+    // Callback to update camera position (will be set by Game component)
+    if (this.onTeleport) {
+      this.onTeleport(message.x, message.y + 1.6, message.z); // +1.6 for eye level
+    }
   }
 
   getGameState(): GameState {

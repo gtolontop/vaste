@@ -51,7 +51,14 @@ export interface PlayerDisconnectMessage {
   id: string;
 }
 
-export type ServerMessage = WorldInitMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage;
+export interface TeleportMessage {
+  type: 'teleport';
+  x: number;
+  y: number;
+  z: number;
+}
+
+export type ServerMessage = WorldInitMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage | TeleportMessage;
 
 // Game state types
 export interface Block {

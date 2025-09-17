@@ -30,7 +30,7 @@ const Player: React.FC<{ position: [number, number, number]; id: string; isCurre
   id, 
   isCurrentPlayer = false 
 }) => {
-  if (isCurrentPlayer) return null; // Don't render current player
+  if (isCurrentPlayer) return null; // Don't render current player (first person view)
   
   return (
     <mesh position={[position[0], position[1] + 0.9, position[2]]}>
@@ -298,7 +298,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
           z: camera.position.z
         };
 
-        // Send movement update
+        // Send movement update to server
         networkManager.sendMessage({
           type: 'player_move',
           x: newPos.x,
@@ -313,6 +313,17 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
   useEffect(() => {
     camera.position.set(8, 10, 8);
   }, [camera]);
+
+  // Setup teleport handler
+  useEffect(() => {
+    networkManager.onTeleport = (x: number, y: number, z: number) => {
+      camera.position.set(x, y, z);
+    };
+    
+    return () => {
+      networkManager.onTeleport = undefined;
+    };
+  }, [camera, networkManager]);
 
   return (
     <>

@@ -4,6 +4,7 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { VasteModSystem } = require('./VasteModSystem');
 
 const PORT = process.env.PORT || 25565;
 
@@ -307,10 +308,35 @@ class GameServer {
         this.players = new Map();
         this.world = new World();
         
+        // Initialize modding system
+        this.modSystem = new VasteModSystem(this);
+        
         this.wss = new WebSocket.Server({ port: PORT });
         
         log(`Vaste server started on port ${PORT}`);
-        this.setupWebSocketServer();
+        this.initializeServer();
+    }
+
+    async initializeServer() {
+        try {
+            log('Loading mods...');
+            await this.modSystem.loadMods();
+            
+            const loadedMods = this.modSystem.getLoadedMods();
+            if (loadedMods.length > 0) {
+                log(`Loaded ${loadedMods.length} mods:`);
+                loadedMods.forEach(mod => {
+                    log(`  - ${mod.name} v${mod.version} by ${mod.author}`);
+                });
+            } else {
+                log('No mods loaded, using default world');
+            }
+            
+            this.setupWebSocketServer();
+        } catch (error) {
+            log(`Error initializing server: ${error.message}`, 'ERROR');
+            this.setupWebSocketServer(); // Continue without mods
+        }
     }
 
     async handleAuthentication(ws, message, tempConnectionId, authTimeout) {
@@ -347,7 +373,7 @@ class GameServer {
             id: user.id,
             username: user.username,
             uuid: user.uuid,
-            x: 8, // Center of world
+            x: 8, // Default center of world
             y: 5,
             z: 8,
             ws: ws
@@ -356,24 +382,34 @@ class GameServer {
         this.players.set(user.id, player);
         log(`Player ${user.username} (ID: ${user.id}) connected. Total players: ${this.players.size}`);
 
+        // Trigger mod system player join event
+        this.modSystem.onPlayerJoin(player);
+
+        // Get world state from mod system or fallback to default
+        const modWorldState = this.modSystem.getWorldState();
+        const worldState = modWorldState || {
+            blocks: this.world.getBlocksArray(),
+            worldSize: WORLD_SIZE
+        };
+
         // Send initial world state
         this.sendToPlayer(user.id, {
             type: 'world_init',
             playerId: user.id,
-            blocks: this.world.getBlocksArray(),
-            worldSize: WORLD_SIZE
+            blocks: worldState.blocks,
+            worldSize: worldState.worldSize
         });
 
         // Send existing players to new player
-        this.players.forEach((player, id) => {
+        this.players.forEach((existingPlayer, id) => {
             if (id !== user.id) {
                 this.sendToPlayer(user.id, {
                     type: 'player_joined',
                     id: id,
-                    username: player.username,
-                    x: player.x,
-                    y: player.y,
-                    z: player.z
+                    username: existingPlayer.username,
+                    x: existingPlayer.x,
+                    y: existingPlayer.y,
+                    z: existingPlayer.z
                 });
             }
         });
@@ -382,7 +418,7 @@ class GameServer {
         this.broadcastToOthers(user.id, {
             type: 'player_joined',
             id: user.id,
-            username: user.username,
+            username: player.username,
             x: player.x,
             y: player.y,
             z: player.z
@@ -436,8 +472,16 @@ class GameServer {
                 if (authTimeout) clearTimeout(authTimeout);
                 
                 if (authenticatedUser) {
+                    // Get player data before removing
+                    const player = this.players.get(authenticatedUser.id);
+                    
                     this.players.delete(authenticatedUser.id);
                     log(`Player ${authenticatedUser.username} (ID: ${authenticatedUser.id}) disconnected. Total players: ${this.players.size}`);
+                    
+                    // Trigger mod system player leave event
+                    if (player) {
+                        this.modSystem.onPlayerLeave(player);
+                    }
                     
                     // Notify other players
                     this.broadcastToOthers(authenticatedUser.id, {
@@ -545,6 +589,36 @@ class GameServer {
             z: z,
             blockType: 1
         });
+    }
+
+    updatePlayerPosition(playerId, x, y, z) {
+        const player = this.players.get(playerId);
+        if (player) {
+            // Update player position in server
+            player.x = x;
+            player.y = y;
+            player.z = z;
+
+            // Send teleport command to specific player (like Minecraft does)
+            const targetPlayer = Array.from(this.players.values()).find(p => p.id === playerId);
+            if (targetPlayer && targetPlayer.ws) {
+                targetPlayer.ws.send(JSON.stringify({
+                    type: 'teleport',
+                    x: x,
+                    y: y,
+                    z: z
+                }));
+            }
+
+            // Also broadcast to other players
+            this.broadcastToOthers(playerId, {
+                type: 'player_update',
+                id: playerId,
+                x: x,
+                y: y,
+                z: z
+            });
+        }
     }
 
     sendToPlayer(playerId, message) {
