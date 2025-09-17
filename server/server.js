@@ -161,7 +161,7 @@ async function validateUserToken(token) {
         const options = {
             hostname: BACKEND_HOST,
             port: BACKEND_PORT,
-            path: '/api/auth/validate-token',
+            path: '/api/auth/verify',
             method: 'GET',
             headers: {
                 'Authorization': `Bearer ${token}`,
@@ -179,10 +179,10 @@ async function validateUserToken(token) {
             res.on('end', () => {
                 try {
                     const result = JSON.parse(responseData);
-                    if (res.statusCode === 200 && result.user) {
-                        resolve(result.user);
+                    if (res.statusCode === 200 && result.success && result.data && result.data.user) {
+                        resolve(result.data.user);
                     } else {
-                        reject(new Error(result.error || 'Token validation failed'));
+                        reject(new Error(result.message || 'Token validation failed'));
                     }
                 } catch (error) {
                     reject(new Error('Invalid response from backend'));
@@ -315,25 +315,19 @@ class GameServer {
 
     async handleAuthentication(ws, message, tempConnectionId, authTimeout) {
         try {
-            // For now, we'll use the username/uuid from the message
-            // Later, you can implement token validation
-            const { username, uuid, token } = message;
+            const { token } = message;
             
-            if (!username || !uuid) {
-                throw new Error('Username and UUID are required');
+            // Token is MANDATORY - no fallback allowed for security
+            if (!token) {
+                throw new Error('Authentication token is required');
             }
 
-            // If token is provided, validate it with backend
-            let user;
-            if (token) {
-                user = await validateUserToken(token);
-            } else {
-                // Fallback for development - create user object from provided info
-                user = {
-                    id: uuid,
-                    username: username,
-                    uuid: uuid
-                };
+            // Validate token with backend - this is the ONLY source of truth
+            const user = await validateUserToken(token);
+            
+            // Additional security: verify the user data is valid
+            if (!user || !user.id || !user.username) {
+                throw new Error('Invalid user data received from backend');
             }
 
             log(`User authenticated: ${user.username} (ID: ${user.id})`);

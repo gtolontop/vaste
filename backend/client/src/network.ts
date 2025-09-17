@@ -33,12 +33,16 @@ export class NetworkManager {
         this.ws.onopen = () => {
           console.log('[CLIENT] Connected to server');
           
-          // Send authentication info if available
+          // Send authentication info with JWT token
           if (this.authenticatedUser) {
+            // Get the token from localStorage
+            const token = localStorage.getItem('vaste_token');
+            
             this.sendMessage({
               type: 'auth_info',
               username: this.authenticatedUser.username,
-              uuid: this.authenticatedUser.uuid
+              uuid: this.authenticatedUser.uuid,
+              token: token
             } as any); // Temporaire jusqu'à ce qu'on mette à jour les types
           }
           
