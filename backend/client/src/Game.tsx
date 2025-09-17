@@ -182,12 +182,13 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       if (event.button === 0) {
         // Left click - break block
         if (isReasonablePosition(blockX, blockY, blockZ)) {
-          networkManager.sendMessage({
+          const actionId = (networkManager as any).sendBlockAction({
             type: 'break_block',
             x: blockX,
             y: blockY,
             z: blockZ
           });
+          // Optionally we could track actionId in UI for undo/feedback
         }
       } else if (event.button === 2) {
         // Right click - place block adjacent to the hit face
@@ -197,11 +198,12 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         if (isReasonablePosition(placeX, placeY, placeZ)) {
           const existingBlockKey = getBlockKey(placeX, placeY, placeZ);
           if (!gameState.blocks.has(existingBlockKey)) {
-            networkManager.sendMessage({
+            const actionId = (networkManager as any).sendBlockAction({
               type: 'place_block',
               x: placeX,
               y: placeY,
-              z: placeZ
+              z: placeZ,
+              blockType: 1
             });
           }
         }

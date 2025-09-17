@@ -1,6 +1,15 @@
 import { ClientMessage, ServerMessage, GameState, getBlockKey } from './types';
 import { User } from './services/auth.types';
 
+// Lightweight unique id generator for action correlation (RFC4122 v4 style-ish)
+function generateId() {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export class NetworkManager {
   private ws: WebSocket | null = null;
   private gameState: GameState;
@@ -104,6 +113,40 @@ export class NetworkManager {
     }
   }
 
+  // Send a block action (place/break) with optimistic update and an actionId for reconciliation
+  sendBlockAction(message: ClientMessage & { actionId?: string }) {
+  const actionId = (message as any).actionId || generateId();
+    (message as any).actionId = actionId;
+
+    // Apply optimistic update locally
+    if (message.type === 'break_block') {
+      const key = getBlockKey(message.x, message.y, message.z);
+      // store previous block so we can rollback if needed
+      const prev = this.gameState.blocks.get(key) || null;
+      this.pendingActions.set(actionId, { type: 'break', key, prev });
+      this.gameState.blocks.delete(key);
+      this.onStateUpdate({ ...this.gameState });
+    } else if (message.type === 'place_block') {
+      const key = getBlockKey(message.x, message.y, message.z);
+      const prev = this.gameState.blocks.get(key) || null;
+      this.pendingActions.set(actionId, { type: 'place', key, prev });
+      this.gameState.blocks.set(key, {
+        x: (message as any).x,
+        y: (message as any).y,
+        z: (message as any).z,
+        type: (message as any).blockType || 1
+      });
+      this.onStateUpdate({ ...this.gameState });
+    }
+
+    // Send to server
+    this.sendMessage(message as ClientMessage);
+    return actionId;
+  }
+
+  // Map of pending optimistic actions by actionId
+  private pendingActions: Map<string, { type: 'break' | 'place'; key: string; prev: any }> = new Map();
+
   private handleServerMessage(message: ServerMessage) {
     switch (message.type) {
       case 'world_init':
@@ -114,6 +157,9 @@ export class NetworkManager {
         break;
       case 'block_update':
         this.handleBlockUpdate(message);
+        break;
+      case 'block_action_result':
+        this.handleBlockActionResult(message as any);
         break;
       case 'player_update':
         this.handlePlayerUpdate(message);
@@ -173,6 +219,36 @@ export class NetworkManager {
     }
 
     this.onStateUpdate({ ...this.gameState });
+  }
+
+  private handleBlockActionResult(message: any) {
+    const { actionId, success, reason } = message;
+    if (!actionId) return;
+
+    const pending = this.pendingActions.get(actionId);
+    if (!pending) return; // might be old or already reconciled
+
+    if (success) {
+      // Server accepted: nothing to do, the block_update message from server will ensure consistency
+      this.pendingActions.delete(actionId);
+      console.log(`[CLIENT] Block action ${actionId} confirmed by server`);
+    } else {
+      // Server rejected: rollback optimistic change
+      console.warn(`[CLIENT] Block action ${actionId} rejected: ${reason}`);
+      if (pending.type === 'break') {
+        if (pending.prev) {
+          this.gameState.blocks.set(pending.key, pending.prev);
+        }
+      } else if (pending.type === 'place') {
+        if (pending.prev) {
+          this.gameState.blocks.set(pending.key, pending.prev);
+        } else {
+          this.gameState.blocks.delete(pending.key);
+        }
+      }
+      this.pendingActions.delete(actionId);
+      this.onStateUpdate({ ...this.gameState });
+    }
   }
 
   private handlePlayerUpdate(message: any) {

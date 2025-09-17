@@ -11,6 +11,7 @@ export interface BreakBlockMessage {
   x: number;
   y: number;
   z: number;
+  actionId?: string;
 }
 
 export interface PlaceBlockMessage {
@@ -18,6 +19,8 @@ export interface PlaceBlockMessage {
   x: number;
   y: number;
   z: number;
+  blockType?: number;
+  actionId?: string;
 }
 
 export type ClientMessage = PlayerMoveMessage | BreakBlockMessage | PlaceBlockMessage;
@@ -41,6 +44,18 @@ export interface BlockUpdateMessage {
   y: number;
   z: number;
   blockType?: number;
+  // Optional action id for correlating optimistic client actions
+  actionId?: string;
+}
+
+export interface BlockActionResultMessage {
+  type: 'block_action_result';
+  actionId: string;
+  success: boolean;
+  reason?: string;
+  x?: number;
+  y?: number;
+  z?: number;
 }
 
 export interface PlayerUpdateMessage {
@@ -63,7 +78,7 @@ export interface TeleportMessage {
   z: number;
 }
 
-export type ServerMessage = WorldInitMessage | ChunksUpdateMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage | TeleportMessage;
+export type ServerMessage = WorldInitMessage | ChunksUpdateMessage | BlockUpdateMessage | PlayerUpdateMessage | PlayerDisconnectMessage | TeleportMessage | BlockActionResultMessage;
 
 // Game state types
 export interface Block {

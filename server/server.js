@@ -628,7 +628,7 @@ class GameServer {
     }
 
     handleBreakBlock(playerId, message) {
-        const { x, y, z } = message;
+        const { x, y, z, actionId } = message;
         
         if (!this.world.isReasonablePosition(x, y, z)) {
             log(`Block position out of reasonable bounds: ${x}, ${y}, ${z}`, 'WARN');
@@ -645,19 +645,30 @@ class GameServer {
         this.world.setBlock(x, y, z, 0);
         log(`Player ${playerId} broke block at (${x}, ${y}, ${z})`);
 
-        // Broadcast block update
+        // Notify the acting player that the action succeeded
+        if (actionId) {
+            this.sendToPlayer(playerId, {
+                type: 'block_action_result',
+                actionId: actionId,
+                success: true,
+                x, y, z
+            });
+        }
+
+        // Broadcast block update (include actionId for correlation)
         this.broadcastToAll({
             type: 'block_update',
             action: 'break',
             x: x,
             y: y,
             z: z,
-            blockType: 0
+            blockType: 0,
+            actionId: actionId
         });
     }
 
     handlePlaceBlock(playerId, message) {
-        const { x, y, z } = message;
+        const { x, y, z, blockType = 1, actionId } = message;
         
         if (!this.world.isReasonablePosition(x, y, z)) {
             log(`Block position out of reasonable bounds: ${x}, ${y}, ${z}`, 'WARN');
@@ -670,18 +681,29 @@ class GameServer {
             return;
         }
 
-        // Place block (type 1 = stone)
-        this.world.setBlock(x, y, z, 1);
-        log(`Player ${playerId} placed block at (${x}, ${y}, ${z})`);
+        // Place block
+        this.world.setBlock(x, y, z, blockType);
+        log(`Player ${playerId} placed block at (${x}, ${y}, ${z}) type ${blockType}`);
 
-        // Broadcast block update
+        // Notify the acting player that the action succeeded
+        if (actionId) {
+            this.sendToPlayer(playerId, {
+                type: 'block_action_result',
+                actionId: actionId,
+                success: true,
+                x, y, z
+            });
+        }
+
+        // Broadcast block update (include actionId for correlation)
         this.broadcastToAll({
             type: 'block_update',
             action: 'place',
             x: x,
             y: y,
             z: z,
-            blockType: 1
+            blockType: blockType,
+            actionId: actionId
         });
     }
 
