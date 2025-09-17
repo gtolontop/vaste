@@ -155,6 +155,49 @@ async function sendHeartbeat(playerCount) {
     });
 }
 
+// Validate user token with backend
+async function validateUserToken(token) {
+    return new Promise((resolve, reject) => {
+        const options = {
+            hostname: BACKEND_HOST,
+            port: BACKEND_PORT,
+            path: '/api/auth/validate-token',
+            method: 'GET',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            }
+        };
+
+        const req = http.request(options, (res) => {
+            let responseData = '';
+
+            res.on('data', (chunk) => {
+                responseData += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(responseData);
+                    if (res.statusCode === 200 && result.user) {
+                        resolve(result.user);
+                    } else {
+                        reject(new Error(result.error || 'Token validation failed'));
+                    }
+                } catch (error) {
+                    reject(new Error('Invalid response from backend'));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(new Error(`Cannot validate token with backend: ${error.message}`));
+        });
+
+        req.end();
+    });
+}
+
 // Synchronize server settings with backend
 async function syncServerSettings() {
     return new Promise((resolve, reject) => {
@@ -270,57 +313,125 @@ class GameServer {
         this.setupWebSocketServer();
     }
 
-    setupWebSocketServer() {
-        this.wss.on('connection', (ws) => {
-            const playerId = uuidv4();
+    async handleAuthentication(ws, message, tempConnectionId, authTimeout) {
+        try {
+            // For now, we'll use the username/uuid from the message
+            // Later, you can implement token validation
+            const { username, uuid, token } = message;
             
-            // Initialize player
-            const player = {
-                id: playerId,
-                x: 8, // Center of world
-                y: 5,
-                z: 8,
-                ws: ws
-            };
-            
-            this.players.set(playerId, player);
-            log(`Player ${playerId} connected. Total players: ${this.players.size}`);
-
-            // Send initial world state
-            this.sendToPlayer(playerId, {
-                type: 'world_init',
-                playerId: playerId,
-                blocks: this.world.getBlocksArray(),
-                worldSize: WORLD_SIZE
-            });
-
-            // Send existing players to new player
-            for (const [id, p] of this.players) {
-                if (id !== playerId) {
-                    this.sendToPlayer(playerId, {
-                        type: 'player_joined',
-                        id: id,
-                        x: p.x,
-                        y: p.y,
-                        z: p.z
-                    });
-                }
+            if (!username || !uuid) {
+                throw new Error('Username and UUID are required');
             }
 
-            // Notify other players about new player
-            this.broadcastToOthers(playerId, {
-                type: 'player_joined',
-                id: playerId,
-                x: player.x,
-                y: player.y,
-                z: player.z
-            });
+            // If token is provided, validate it with backend
+            let user;
+            if (token) {
+                user = await validateUserToken(token);
+            } else {
+                // Fallback for development - create user object from provided info
+                user = {
+                    id: uuid,
+                    username: username,
+                    uuid: uuid
+                };
+            }
 
-            // Handle messages
+            log(`User authenticated: ${user.username} (ID: ${user.id})`);
+            
+            // Clear auth timeout
+            if (authTimeout) clearTimeout(authTimeout);
+            
+            return user;
+        } catch (error) {
+            throw error;
+        }
+    }
+
+    initializeAuthenticatedPlayer(ws, user) {
+        // Initialize player with authenticated user data
+        const player = {
+            id: user.id,
+            username: user.username,
+            uuid: user.uuid,
+            x: 8, // Center of world
+            y: 5,
+            z: 8,
+            ws: ws
+        };
+        
+        this.players.set(user.id, player);
+        log(`Player ${user.username} (ID: ${user.id}) connected. Total players: ${this.players.size}`);
+
+        // Send initial world state
+        this.sendToPlayer(user.id, {
+            type: 'world_init',
+            playerId: user.id,
+            blocks: this.world.getBlocksArray(),
+            worldSize: WORLD_SIZE
+        });
+
+        // Send existing players to new player
+        this.players.forEach((player, id) => {
+            if (id !== user.id) {
+                this.sendToPlayer(user.id, {
+                    type: 'player_joined',
+                    id: id,
+                    username: player.username,
+                    x: player.x,
+                    y: player.y,
+                    z: player.z
+                });
+            }
+        });
+
+        // Notify other players about new player
+        this.broadcastToOthers(user.id, {
+            type: 'player_joined',
+            id: user.id,
+            username: user.username,
+            x: player.x,
+            y: player.y,
+            z: player.z
+        });
+    }
+
+    setupWebSocketServer() {
+        this.wss.on('connection', (ws) => {
+            let tempConnectionId = uuidv4();
+            let authenticatedUser = null;
+            let authTimeout = null;
+
+            log(`New connection established, awaiting authentication... (temp ID: ${tempConnectionId.substring(0, 8)})`);
+
+            // Set authentication timeout (30 seconds)
+            authTimeout = setTimeout(() => {
+                if (!authenticatedUser) {
+                    log(`Authentication timeout for connection ${tempConnectionId.substring(0, 8)}`, 'WARN');
+                    ws.close(1008, 'Authentication timeout');
+                }
+            }, 30000);
+
+            // Handle messages (including authentication)
             ws.on('message', (data) => {
                 try {
                     const message = JSON.parse(data);
-                    this.handleMessage(playerId, message);
+                    
+                    if (!authenticatedUser && message.type === 'auth_info') {
+                        this.handleAuthentication(ws, message, tempConnectionId, authTimeout)
+                            .then((user) => {
+                                authenticatedUser = user;
+                                this.initializeAuthenticatedPlayer(ws, user);
+                            })
+                            .catch((error) => {
+                                log(`Authentication failed for ${tempConnectionId.substring(0, 8)}: ${error.message}`, 'ERROR');
+                                ws.close(1008, 'Authentication failed');
+                            });
+                    } else if (authenticatedUser && message.type !== 'auth_info') {
+                        this.handleMessage(authenticatedUser.id, message);
+                    } else if (!authenticatedUser) {
+                        log(`Received message before authentication from ${tempConnectionId.substring(0, 8)}`, 'WARN');
+                        ws.close(1008, 'Authentication required');
+                    }
                 } catch (error) {
                     log(`Error parsing message: ${error.message}`, 'ERROR');
                 }
@@ -328,14 +439,20 @@ class GameServer {
 
             // Handle disconnection
             ws.on('close', () => {
-                this.players.delete(playerId);
-                log(`Player ${playerId} disconnected. Total players: ${this.players.size}`);
+                if (authTimeout) clearTimeout(authTimeout);
                 
-                // Notify other players
-                this.broadcastToOthers(playerId, {
-                    type: 'player_disconnect',
-                    id: playerId
-                });
+                if (authenticatedUser) {
+                    this.players.delete(authenticatedUser.id);
+                    log(`Player ${authenticatedUser.username} (ID: ${authenticatedUser.id}) disconnected. Total players: ${this.players.size}`);
+                    
+                    // Notify other players
+                    this.broadcastToOthers(authenticatedUser.id, {
+                        type: 'player_disconnect',
+                        id: authenticatedUser.id
+                    });
+                } else {
+                    log(`Unauthenticated connection ${tempConnectionId.substring(0, 8)} disconnected`);
+                }
             });
 
             ws.on('error', (error) => {
