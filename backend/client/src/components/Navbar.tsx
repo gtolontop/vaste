@@ -159,6 +159,15 @@ const Navbar: React.FC = () => {
             Server List
           </Link>
 
+          <Link 
+            to="/vaste-functions" 
+            style={linkStyle}
+            onMouseEnter={(e) => Object.assign(e.currentTarget.style, linkHoverStyle)}
+            onMouseLeave={(e) => Object.assign(e.currentTarget.style, linkStyle)}
+          >
+            Vaste Functions
+          </Link>
+
           <div style={dropdownContainerStyle} ref={dropdownRef}>
             <button
               style={{

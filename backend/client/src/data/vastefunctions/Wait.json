@@ -1,0 +1,24 @@
+{
+  "name": "Wait",
+  "category": "Threading",
+  "description": "Pauses the execution of the current thread for the specified amount of time in milliseconds. This function is non-blocking and allows other threads to continue running.",
+  "syntax": "Wait(milliseconds)",
+  "parameters": [
+    {
+      "name": "milliseconds",
+      "type": "number",
+      "required": true,
+      "description": "The time to wait in milliseconds"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Wait for 1 second\nWait(1000)\n\n-- Wait for 5 seconds\nWait(5000)\n\n-- Example in a loop\nwhile true do\n    print(\"Hello World\")\n    Wait(2000) -- Wait 2 seconds between each print\nend",
+  "notes": [
+    "Wait() must be used inside a CreateThread() function",
+    "The function uses JavaScript's Promise-based setTimeout internally",
+    "Minimum wait time is effectively 1ms due to JavaScript limitations"
+  ]
+}

@@ -12,6 +12,7 @@ import MyServersPage from './pages/MyServersPage';
 import CreateServerPage from './pages/CreateServerPage';
 import MyServerDetailPage from './pages/MyServerDetailPage';
 import GamePage from './pages/GamePage';
+import VasteFunctionsPage from './pages/VasteFunctionsPage';
 
 const App: React.FC = () => {
   return (
@@ -36,6 +37,7 @@ const App: React.FC = () => {
               <Route path="/create-server" element={<CreateServerPage />} />
               <Route path="/my-servers/:id" element={<MyServerDetailPage />} />
               <Route path="/play/:serverUrl" element={<GamePage />} />
+              <Route path="/vaste-functions" element={<VasteFunctionsPage />} />
             </Routes>
           </main>
           <Footer />

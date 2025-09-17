@@ -1,0 +1,31 @@
+{
+  "name": "AddEventListener",
+  "category": "Events",
+  "description": "Registers a function to be called when a specific event occurs in the game. This allows mods to respond to player actions and game events.",
+  "syntax": "AddEventListener(eventName, callback)",
+  "parameters": [
+    {
+      "name": "eventName",
+      "type": "string",
+      "required": true,
+      "description": "The name of the event to listen for (e.g., 'onPlayerJoin', 'onPlayerLeave')"
+    },
+    {
+      "name": "callback",
+      "type": "function",
+      "required": true,
+      "description": "The function to call when the event occurs"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Listen for player join events\nAddEventListener(\"onPlayerJoin\", function(player)\n    print(\"Welcome \" .. player.username .. \"!\")\n    local entity = GetPlayerEntity(player)\n    SetEntityCoords(entity, vec3(0, 10, 0))\nend)\n\n-- Listen for player leave events\nAddEventListener(\"onPlayerLeave\", function(player)\n    print(player.username .. \" has left the game\")\nend)",
+  "notes": [
+    "Event callbacks receive relevant data as parameters",
+    "Multiple listeners can be registered for the same event",
+    "Events are triggered automatically by the game engine",
+    "Common events: 'onPlayerJoin', 'onPlayerLeave', 'onBlockBreak', 'onBlockPlace'"
+  ]
+}

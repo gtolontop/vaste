@@ -1,0 +1,24 @@
+{
+  "name": "print",
+  "category": "Utility",
+  "description": "Outputs a message to the server console. Useful for debugging and logging information from your mod scripts.",
+  "syntax": "print(message)",
+  "parameters": [
+    {
+      "name": "message",
+      "type": "string",
+      "required": true,
+      "description": "The message to print to the console"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Simple message\nprint(\"Hello, World!\")\n\n-- Print variables\nlocal playerName = \"John\"\nprint(\"Player name: \" .. playerName)\n\n-- Print numbers\nlocal score = 1500\nprint(\"Score: \" .. score)\n\n-- Debug information\nprint(\"Script loaded successfully\")",
+  "notes": [
+    "Messages appear in the server console with [VASTE-MOD] prefix",
+    "Use string concatenation (..) to combine text and variables",
+    "Useful for debugging mod behavior and tracking execution flow"
+  ]
+}

@@ -1,0 +1,31 @@
+{
+  "name": "SetEntityInWorld",
+  "category": "Entity Management",
+  "description": "Assigns an entity to a specific world. Entities must be in a world to be visible and interactive to players.",
+  "syntax": "SetEntityInWorld(entity, world)",
+  "parameters": [
+    {
+      "name": "entity",
+      "type": "VasteEntity",
+      "required": true,
+      "description": "The entity to assign to the world"
+    },
+    {
+      "name": "world",
+      "type": "VasteWorld",
+      "required": true,
+      "description": "The world to assign the entity to"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Create a world and assign player to it\nlocal gameWorld = CreateWorld(32, 32)\nFillBlocksInWorld(gameWorld, vec3(0, 0, 0), vec3(31, 1, 31))\n\nAddEventListener(\"onPlayerJoin\", function(player)\n    local playerEntity = GetPlayerEntity(player)\n    SetEntityInWorld(playerEntity, gameWorld)\n    SetEntityCoords(playerEntity, vec3(16, 2, 16))\nend)",
+  "notes": [
+    "Entities can only be in one world at a time",
+    "Moving an entity to a new world removes it from the previous world",
+    "Players will only see blocks and entities in their current world",
+    "The world must exist before assigning entities to it"
+  ]
+}

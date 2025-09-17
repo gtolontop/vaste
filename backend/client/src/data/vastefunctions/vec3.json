@@ -1,0 +1,37 @@
+{
+  "name": "vec3",
+  "category": "Math",
+  "description": "Creates a 3D vector with x, y, and z coordinates. Vectors are used for positions, directions, and other 3D calculations.",
+  "syntax": "vec3(x, y, z)",
+  "parameters": [
+    {
+      "name": "x",
+      "type": "number",
+      "required": true,
+      "description": "The X coordinate"
+    },
+    {
+      "name": "y",
+      "type": "number",
+      "required": true,
+      "description": "The Y coordinate"
+    },
+    {
+      "name": "z",
+      "type": "number",
+      "required": true,
+      "description": "The Z coordinate"
+    }
+  ],
+  "returns": {
+    "type": "Vector3",
+    "description": "A 3D vector object with x, y, and z properties"
+  },
+  "example": "-- Create position vectors\nlocal spawnPoint = vec3(0, 10, 0)\nlocal targetPos = vec3(15, 5, 20)\n\n-- Use in world functions\nlocal world = CreateWorld(32, 32)\nFillBlocksInWorld(world, vec3(0, 0, 0), vec3(10, 1, 10))\n\n-- Use for entity positioning\nSetEntityCoords(playerEntity, vec3(5, 2, 5))",
+  "notes": [
+    "Y coordinate typically represents height/elevation",
+    "X and Z coordinates represent horizontal position",
+    "Vectors are required for most position-related functions",
+    "Coordinates can be negative or decimal values"
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "tostring",
+  "category": "Utility",
+  "description": "Converts any value to its string representation. Useful for debugging and displaying variable values.",
+  "syntax": "tostring(value)",
+  "parameters": [
+    {
+      "name": "value",
+      "type": "any",
+      "required": true,
+      "description": "The value to convert to a string"
+    }
+  ],
+  "returns": {
+    "type": "string",
+    "description": "The string representation of the value"
+  },
+  "example": "-- Convert numbers to strings\nlocal num = 42\nprint(\"Number: \" .. tostring(num))\n\n-- Convert objects to strings\nlocal player = GetPlayerEntity(somePlayer)\nprint(\"Entity: \" .. tostring(player))\n\n-- Convert nil values\nlocal empty = nil\nprint(\"Empty: \" .. tostring(empty)) -- Prints \"nil\"\n\n-- Convert boolean values\nlocal isActive = true\nprint(\"Active: \" .. tostring(isActive))",
+  "notes": [
+    "Objects are converted to JSON string representation",
+    "nil values become the string \"nil\"",
+    "Boolean values become \"true\" or \"false\"",
+    "Essential for string concatenation with non-string values"
+  ]
+}

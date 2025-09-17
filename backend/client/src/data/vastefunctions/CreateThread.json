@@ -1,0 +1,25 @@
+{
+  "name": "CreateThread",
+  "category": "Threading",
+  "description": "Creates a new thread that runs asynchronously and in parallel with the main script execution. This allows for non-blocking operations and concurrent code execution.",
+  "syntax": "CreateThread(function)",
+  "parameters": [
+    {
+      "name": "function",
+      "type": "function",
+      "required": true,
+      "description": "The function to execute in the new thread"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Basic thread creation\nCreateThread(function()\n    while true do\n        print(\"This runs every 3 seconds\")\n        Wait(3000)\n    end\nend)\n\n-- Multiple threads running in parallel\nCreateThread(function()\n    for i = 1, 10 do\n        print(\"Thread 1: \" .. i)\n        Wait(1000)\n    end\nend)\n\nCreateThread(function()\n    for i = 1, 5 do\n        print(\"Thread 2: \" .. i)\n        Wait(2000)\n    end\nend)\n\nprint(\"This executes immediately!\")",
+  "notes": [
+    "Threads run independently and don't block the main execution",
+    "Use Wait() inside threads to prevent infinite tight loops",
+    "Threads continue running until the script ends or an error occurs",
+    "Similar to FiveM's CreateThread functionality"
+  ]
+}

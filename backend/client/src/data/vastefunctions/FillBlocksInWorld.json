@@ -1,0 +1,43 @@
+{
+  "name": "FillBlocksInWorld",
+  "category": "World Management",
+  "description": "Fills a rectangular area in the specified world with blocks. This is useful for creating terrain, buildings, or other structures.",
+  "syntax": "FillBlocksInWorld(world, startPos, endPos, blockType)",
+  "parameters": [
+    {
+      "name": "world",
+      "type": "VasteWorld",
+      "required": true,
+      "description": "The world object to fill blocks in"
+    },
+    {
+      "name": "startPos",
+      "type": "Vector3",
+      "required": true,
+      "description": "The starting position of the fill area (created with vec3())"
+    },
+    {
+      "name": "endPos",
+      "type": "Vector3",
+      "required": true,
+      "description": "The ending position of the fill area (created with vec3())"
+    },
+    {
+      "name": "blockType",
+      "type": "number",
+      "required": false,
+      "description": "The type of block to place (defaults to 1)"
+    }
+  ],
+  "returns": {
+    "type": "void",
+    "description": "This function does not return a value"
+  },
+  "example": "-- Create a world and add a ground plane\nlocal world = CreateWorld(32, 32)\nFillBlocksInWorld(world, vec3(0, 0, 0), vec3(31, 1, 31))\n\n-- Create a wall\nFillBlocksInWorld(world, vec3(10, 2, 10), vec3(10, 5, 20))\n\n-- Create a platform with specific block type\nFillBlocksInWorld(world, vec3(5, 10, 5), vec3(15, 10, 15), 2)",
+  "notes": [
+    "The fill operation includes both start and end coordinates",
+    "Block coordinates are inclusive on both ends",
+    "Use vec3() to create position vectors",
+    "Different block types may have different visual appearances"
+  ]
+}

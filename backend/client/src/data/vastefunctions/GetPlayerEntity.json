@@ -1,0 +1,25 @@
+{
+  "name": "GetPlayerEntity",
+  "category": "Entity Management",
+  "description": "Retrieves the entity object for a specific player. Entity objects are used to manipulate player position, world assignment, and other properties.",
+  "syntax": "GetPlayerEntity(player)",
+  "parameters": [
+    {
+      "name": "player",
+      "type": "Player|number",
+      "required": true,
+      "description": "The player object (from event callbacks) or player ID number"
+    }
+  ],
+  "returns": {
+    "type": "VasteEntity",
+    "description": "The player's entity object, or nil if the player doesn't exist"
+  },
+  "example": "-- Get entity from player object (in event callback)\nAddEventListener(\"onPlayerJoin\", function(player)\n    local playerEntity = GetPlayerEntity(player)\n    SetEntityCoords(playerEntity, vec3(0, 10, 0))\nend)\n\n-- Get entity by player ID\nlocal playerId = 1\nlocal entity = GetPlayerEntity(playerId)\nif entity then\n    SetEntityInWorld(entity, myWorld)\nend",
+  "notes": [
+    "Returns nil if the player ID doesn't exist",
+    "Player entities are automatically created when players join",
+    "Entity objects persist until the player disconnects",
+    "Required for most player manipulation functions"
+  ]
+}
