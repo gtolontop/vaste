@@ -214,6 +214,22 @@ export class GameServer {
     }
   }
 
+  // Update max players (called by game server)
+  async updateMaxPlayers(maxPlayers) {
+    const db = getDB();
+    
+    try {
+      await db.execute(
+        'UPDATE game_servers SET max_players = ?, updated_at = NOW() WHERE id = ?',
+        [maxPlayers, this.id]
+      );
+
+      this.max_players = maxPlayers;
+    } catch (error) {
+      throw error;
+    }
+  }
+
   // Update server information
   async update({ name, description, max_players, is_public, version, tags }) {
     const db = getDB();

@@ -7,6 +7,11 @@ const path = require('path');
 
 const PORT = process.env.PORT || 25565;
 
+// Backend configuration (hardcoded)
+const BACKEND_HOST = 'localhost';
+const BACKEND_PORT = 8080;
+const BACKEND_URL = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
+
 // License configuration
 const CONFIG_FILE = path.join(__dirname, 'server-config.json');
 let SERVER_CONFIG = {};
@@ -21,8 +26,6 @@ function loadConfig() {
             console.log('Example configuration:');
             console.log(JSON.stringify({
                 license_key: 'vaste_your_license_key_here',
-                backend_url: 'http://localhost:8080',
-                server_name: 'My Game Server',
                 max_players: 20
             }, null, 2));
             process.exit(1);
@@ -41,8 +44,8 @@ async function validateLicense() {
         });
 
         const options = {
-            hostname: 'localhost',
-            port: 8080,
+            hostname: BACKEND_HOST,
+            port: BACKEND_PORT,
             path: '/api/game-servers/validate-license',
             method: 'POST',
             headers: {
@@ -90,8 +93,8 @@ async function sendHeartbeat(playerCount) {
         });
 
         const options = {
-            hostname: 'localhost',
-            port: 8080,
+            hostname: BACKEND_HOST,
+            port: BACKEND_PORT,
             path: '/api/game-servers/heartbeat',
             method: 'POST',
             headers: {
@@ -120,6 +123,56 @@ async function sendHeartbeat(playerCount) {
             // Don't crash on heartbeat errors, just log them
             console.warn('⚠️ Heartbeat failed:', error.message);
             resolve();
+        });
+
+        req.write(data);
+        req.end();
+    });
+}
+
+// Synchronize server settings with backend
+async function syncServerSettings() {
+    return new Promise((resolve, reject) => {
+        const data = JSON.stringify({
+            license_key: SERVER_CONFIG.license_key,
+            max_players: SERVER_CONFIG.max_players,
+            current_players: 0
+        });
+
+        const options = {
+            hostname: BACKEND_HOST,
+            port: BACKEND_PORT,
+            path: '/api/game-servers/sync-settings',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': data.length
+            }
+        };
+
+        const req = http.request(options, (res) => {
+            let responseData = '';
+
+            res.on('data', (chunk) => {
+                responseData += chunk;
+            });
+
+            res.on('end', () => {
+                try {
+                    const result = JSON.parse(responseData);
+                    if (res.statusCode === 200) {
+                        resolve(result);
+                    } else {
+                        reject(new Error(result.error || 'Settings synchronization failed'));
+                    }
+                } catch (error) {
+                    reject(new Error('Invalid response from backend'));
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            reject(new Error(`Cannot sync with backend: ${error.message}`));
         });
 
         req.write(data);
@@ -396,7 +449,11 @@ async function startServer() {
         console.log(`✅ License valid! Server: ${licenseInfo.server.name}`);
         console.log(`📅 License expires: ${new Date(licenseInfo.server.license_expires_at).toLocaleDateString()}`);
 
-        console.log('🚀 Starting game server...');
+        console.log('� Synchronizing server settings with backend...');
+        await syncServerSettings();
+        console.log('✅ Server settings synchronized');
+
+        console.log('�🚀 Starting game server...');
         const gameServer = new GameServer();
 
         // Send periodic heartbeats to backend
@@ -409,7 +466,9 @@ async function startServer() {
         }, 30000); // Every 30 seconds
 
         console.log(`✅ Game server running on port ${PORT}`);
-        console.log(`📊 Max players: ${licenseInfo.server.max_players}`);
+        console.log(`📊 Max players: ${SERVER_CONFIG.max_players} (synced with backend)`);
+        console.log(`🏷️ Server name: ${licenseInfo.server.name}`);
+        console.log(`📝 Description: ${licenseInfo.server.description || 'No description'}`);
         console.log(`🔑 License key: ${SERVER_CONFIG.license_key.substring(0, 16)}...`);
 
         // Graceful shutdown

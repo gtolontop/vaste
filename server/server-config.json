@@ -1,7 +1,4 @@
 {
   "license_key": "vaste_e09df9857fd2db67308ca5e70bfc2b718d7da987102882fdd9e57a96615d8a48",
-  "backend_url": "http://localhost:8080",
-  "server_name": "Test Game Server",
-  "max_players": 20,
-  "description": "A test Vaste game server"
+  "max_players": 193
 }

@@ -161,6 +161,7 @@ router.post('/validate-license', async (req, res) => {
       server: {
         uuid: validation.server.uuid,
         name: validation.server.name,
+        description: validation.server.description,
         max_players: validation.server.max_players,
         license_expires_at: validation.server.license_expires_at
       }
@@ -192,6 +193,45 @@ router.post('/heartbeat', async (req, res) => {
   } catch (error) {
     console.error('Error processing heartbeat:', error);
     res.status(500).json({ error: 'Failed to process heartbeat' });
+  }
+});
+
+// Sync server settings (called by game server on startup)
+router.post('/sync-settings', async (req, res) => {
+  try {
+    const { license_key, max_players, current_players } = req.body;
+
+    if (!license_key) {
+      return res.status(400).json({ error: 'License key required' });
+    }
+
+    const validation = await GameServer.validateLicense(license_key);
+
+    if (!validation.valid) {
+      return res.status(401).json({ error: validation.error });
+    }
+
+    // Update server max_players if provided
+    if (max_players !== undefined) {
+      await validation.server.updateMaxPlayers(max_players);
+    }
+
+    // Update current status
+    await validation.server.updateStatus(true, current_players || 0);
+
+    res.json({ 
+      message: 'Settings synchronized successfully',
+      server: {
+        uuid: validation.server.uuid,
+        name: validation.server.name,
+        description: validation.server.description,
+        max_players: validation.server.max_players,
+        license_expires_at: validation.server.license_expires_at
+      }
+    });
+  } catch (error) {
+    console.error('Error syncing server settings:', error);
+    res.status(500).json({ error: 'Failed to sync server settings' });
   }
 });
 
