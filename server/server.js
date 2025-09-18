@@ -398,6 +398,16 @@ class GameServer {
                 loadedMods.forEach(mod => {
                     log(`  - ${mod.name} v${mod.version} by ${mod.author}`);
                 });
+                // If a mod created or loaded an active world, prefer it as the server world
+                try {
+                    const activeModWorld = this.modSystem.worldManager && this.modSystem.worldManager.getActiveWorld && this.modSystem.worldManager.getActiveWorld();
+                    if (activeModWorld && typeof activeModWorld.getBlocksInRange === 'function') {
+                        this.world = activeModWorld;
+                        log('Using mod-provided active world as server world');
+                    }
+                } catch (e) {
+                    // ignore if world manager not accessible or other errors
+                }
             } else {
                 log('No mods loaded, using default world');
             }
@@ -476,6 +486,7 @@ class GameServer {
         };
 
         // Send initial world state with only nearby blocks
+        log(`Sending world_init to ${user.username} with ${Array.isArray(worldState.blocks) ? worldState.blocks.length : 0} blocks`);
         this.sendToPlayer(user.id, {
             type: 'world_init',
             playerId: user.id,
@@ -773,6 +784,7 @@ class GameServer {
         );
         
         // Envoyer les nouveaux blocs au joueur
+        log(`Sending chunks_update to player ${playerId} with ${nearbyBlocks.length} blocks`);
         this.sendToPlayer(playerId, {
             type: 'chunks_update',
             blocks: nearbyBlocks

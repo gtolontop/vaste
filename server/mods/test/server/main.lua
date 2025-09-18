@@ -3,8 +3,11 @@
 
 print("Test mod server script loaded")
 
--- Create a moderately sized test world for performance testing
-local testworld = CreateWorld(128, 128) -- Monde un peu plus grand pour tester render distance
+-- Create or load a persisted world stored under the mod folder at 'savedworld/testworld'
+-- This new API will create the folder structure and manage chunk files under that path.
+local testworld = CreateOrLoadWorld("savedworld/testworld", "flatworld")
+
+-- Fill a local area for testing (generator already creates flat ground but we ensure some structures)
 FillBlocksInWorld(testworld, vec3(0, 0, 0), vec3(64, 1, 64)) -- Sol de 64x64
 
 -- Quelques structures pour tester la render distance

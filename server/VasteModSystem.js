@@ -35,6 +35,14 @@ class VasteModSystem {
             return this.worldManager.createWorld(width, height, depth || 256);
         };
 
+        // CreateOrLoadWorld: Create or load a persisted world folder relative to the mod root
+        global.CreateOrLoadWorld = (relativePath, type) => {
+            // Resolve using temporary global __currentModPath set while loading scripts
+            const modRoot = global.__currentModPath || process.cwd();
+            const finalPath = path.join(modRoot, relativePath);
+            return this.worldManager.createOrLoadWorld(finalPath, { type: type || 'flatworld' });
+        };
+
         global.FillBlocksInWorld = (world, startPos, endPos, blockType) => {
             this.worldManager.fillBlocksInWorld(world, startPos, endPos, blockType || 1);
         };
@@ -213,6 +221,8 @@ class VasteModSystem {
         for (const serverScript of modContext.serverScripts) {
             if (fs.existsSync(serverScript)) {
                 try {
+                    // Set current mod path so CreateOrLoadWorld can resolve relative paths
+                    global.__currentModPath = modPath;
                     if (serverScript.endsWith('.js')) {
                         // Execute JavaScript file
                         require(serverScript);
@@ -228,6 +238,9 @@ class VasteModSystem {
                     }
                 } catch (error) {
                     throw new Error(`Error executing server script ${serverScript}: ${error.message}`);
+                } finally {
+                    // Clear the temporary mod path
+                    try { delete global.__currentModPath; } catch (e) { global.__currentModPath = undefined; }
                 }
             } else {
                 this.log(`Warning: Server script not found: ${serverScript}`);
@@ -299,11 +312,11 @@ class VasteModSystem {
     getWorldState() {
         const activeWorld = this.worldManager.getActiveWorld();
         if (activeWorld) {
-            return {
-                blocks: activeWorld.getBlocksArray(),
-                worldSize: Math.max(activeWorld.width, activeWorld.height),
-                spawnPoint: activeWorld.spawnPoint
-            };
+            // Support both legacy VasteWorld and new persisted world runtime
+            const blocks = typeof activeWorld.getBlocksArray === 'function' ? activeWorld.getBlocksArray() : [];
+            const spawnPoint = activeWorld.spawn || activeWorld.spawnPoint || { x: 0, y: 4, z: 0 };
+            const worldSize = (activeWorld.width && activeWorld.height) ? Math.max(activeWorld.width, activeWorld.height) : null;
+            return { blocks, worldSize, spawnPoint };
         }
         return null;
     }
