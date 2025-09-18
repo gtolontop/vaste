@@ -5,12 +5,23 @@ const { WorldStorage } = require('./world_storage');
 const CHUNK_SIZE = 16; // X and Z dimensions
 const DEFAULT_HEIGHT = 256; // vertical height
 
+// Default flatworld layer configuration (in blocks)
+// 1 block grass on top, 3 blocks dirt below it, 40 blocks stone below that
+const GRASS_LAYERS = 1;
+const DIRT_LAYERS = 3;
+const STONE_LAYERS = 40;
+// We'll leave a couple of empty air layers below ground (as previous behaviour);
+// GROUND_TOP is the 'top' value used by the column model (number of solid layers)
+const GROUND_AIR_OFFSET = 2; // number of empty layers beneath stone start (keeps old layout)
+const GROUND_TOP = GRASS_LAYERS + DIRT_LAYERS + STONE_LAYERS + GROUND_AIR_OFFSET;
+
 class World {
   constructor(rootPath, options = {}) {
     this.rootPath = rootPath;
     this.storage = new WorldStorage(rootPath);
-    this.type = options.type || 'flatworld';
-    this.spawn = options.spawn || { x: 0, y: 4, z: 0 };
+  this.type = options.type || 'flatworld';
+  // Default spawn placed above the flat ground so players spawn on safe air above grass
+  this.spawn = options.spawn || { x: 0, y: GROUND_TOP + 1, z: 0 };
     this.height = options.height || DEFAULT_HEIGHT;
 
     // Compatibility: entity containers and spawnPoint alias
@@ -81,12 +92,12 @@ class World {
   }
 
     // Simple flat generator: store top height per column. Block types are resolved dynamically
-    // according to layered rules: top = grass (id 3), 3 layers dirt (id 2), 40 layers stone (id 1)
+    // according to layered rules defined by the constants above
     generateChunk(cx, cz) {
       const out = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-      // We'll set a classical flat top at y=46 (grass at y=45, dirt 42-44, stone 2-41)
-      // top value represents number of solid layers (top = highest y + 1)
-      const TOP = 46; // top value meaning highest solid block is y=45
+      // top value represents number of solid layers (top = highest solid y + 1)
+      // Use GROUND_TOP computed from GRASS/DIRT/STONE layers + offset
+      const TOP = GROUND_TOP; // highest solid block will be at y = TOP - 1
       for (let x = 0; x < CHUNK_SIZE; x++) {
         for (let z = 0; z < CHUNK_SIZE; z++) {
           const idx = x * CHUNK_SIZE + z;
@@ -306,16 +317,18 @@ class World {
 
   // Decide block type given a local y and column top
   _blockTypeForHeight(y, top) {
-    // layering rules relative to top (top is number of solid layers, highest solid y = top-1)
-    // top-most block (y === top-1) => grass (3)
-    // below top: if y >= top-4 && y < top-1 => dirt (2)  (3 layers)
-    // below that up to 40 layers => stone (1)
-    // otherwise air (0)
-    const topIndex = top - 1;
-    if (y === topIndex) return 3; // grass
-    if (y >= topIndex - 3 && y < topIndex) return 2; // dirt
-    if (y < topIndex - 3 && y >= topIndex - 43) return 1; // stone (40 layers)
-    return 0;
+  // layering rules relative to top (top is number of solid layers, highest solid y = top-1)
+  // Use the configured GRASS_LAYERS, DIRT_LAYERS and STONE_LAYERS values
+  const topIndex = top - 1; // highest solid y
+  // Grass: the top-most GRASS_LAYERS rows
+  if (y > topIndex - GRASS_LAYERS && y <= topIndex) return 3; // grass
+  // Dirt: immediately below grass for DIRT_LAYERS rows
+  const dirtTop = topIndex - GRASS_LAYERS;
+  if (y > dirtTop - DIRT_LAYERS && y <= dirtTop) return 2; // dirt
+  // Stone: below dirt for STONE_LAYERS rows
+  const stoneTop = dirtTop - DIRT_LAYERS;
+  if (y > stoneTop - STONE_LAYERS && y <= stoneTop) return 1; // stone
+  return 0; // air
   }
 
   getWorldSize() {

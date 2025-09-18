@@ -51,6 +51,9 @@ export class NetworkManager {
         this.ws = new WebSocket(serverUrl);
 
         this.ws.onopen = () => {
+          // Visible log for debugging connection lifecycle
+          // eslint-disable-next-line no-console
+          console.log('[CLIENT] WebSocket opened to', serverUrl);
           logger.info('[CLIENT] Connected to server');
           
           // Send authentication info with JWT token
@@ -64,6 +67,7 @@ export class NetworkManager {
               uuid: this.authenticatedUser.uuid,
               token: token
             } as any); // Temporaire jusqu'à ce qu'on mette à jour les types
+            // after auth we will send chunk_have once server acknowledges auth and sends world_init
           }
           
           this.gameState.connected = true;
@@ -71,9 +75,91 @@ export class NetworkManager {
           resolve();
         };
 
-        this.ws.onmessage = (event) => {
+        this.ws.onmessage = async (event) => {
+          // eslint-disable-next-line no-console
+          console.log('[CLIENT] WebSocket message received (type=', typeof event.data, ')');
+          // If it's a string/text message, log the raw (truncated) payload and a compact summary for debugging
+          if (typeof event.data === 'string') {
+            try {
+              // eslint-disable-next-line no-console
+              console.log('[CLIENT] Raw text message preview:', event.data.substring ? event.data.substring(0, 1000) : String(event.data));
+            } catch (e) {
+              // ignore
+            }
+            try {
+              const parsed = JSON.parse(event.data);
+              // eslint-disable-next-line no-console
+              console.log('[CLIENT] WebSocket text message type=', parsed.type, parsed.blocks ? `blocks=${(parsed.blocks||[]).length}` : '');
+            } catch (e) {
+              // eslint-disable-next-line no-console
+              console.log('[CLIENT] WebSocket text message (non-json or parse failed)');
+            }
+          }
           try {
-            const message: ServerMessage = JSON.parse(event.data);
+            // If the server sent a binary chunk message (ArrayBuffer), decode it
+            if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
+              const handleArrayBuffer = async (ab: ArrayBuffer) => {
+                const dv = new DataView(ab);
+                let off = 0;
+                const msgType = dv.getUint8(off); off += 1;
+                if (msgType === 1) { // CHUNK_INIT
+                  const seq = dv.getUint32(off, true); off += 4;
+                  const cx = dv.getInt32(off, true); off += 4;
+                  const cy = dv.getInt32(off, true); off += 4;
+                  const cz = dv.getInt32(off, true); off += 4;
+                  const version = dv.getInt32(off, true); off += 4;
+                  const entryCount = dv.getUint16(off, true); off += 2;
+                  const blocks: any[] = [];
+                  for (let i = 0; i < entryCount; i++) {
+                    const idx = dv.getUint16(off, true); off += 2;
+                    const type = dv.getUint16(off, true); off += 2;
+                    // compute local x,y,z from idx (same ordering as server)
+                    const x = idx % 16;
+                    const tmp = Math.floor(idx / 16);
+                    const z = tmp % 16;
+                    const y = Math.floor(tmp / 16);
+                    const wx = cx * 16 + x;
+                    const wy = cy * 16 + y;
+                    const wz = cz * 16 + z;
+                    blocks.push({ x: wx, y: wy, z: wz, type });
+                  }
+                  // Enqueue blocks for processing (don't clear existing)
+                  this.enqueueBlocksForProcessing(blocks, { clearExisting: false });
+                    // Send ACK to server so it can slide its window
+                    // eslint-disable-next-line no-console
+                    console.log('[CLIENT] sending chunk_ack seq=', seq, ' for chunk', cx, cy, cz);
+                  try {
+                    const chunkKey = `${cx},${cy},${cz}:${version}:${seq}`;
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                      // persist applied seq
+                      try {
+                        const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+                        const set = raw ? JSON.parse(raw) : [];
+                        if (!set.includes(seq)) {
+                          set.push(seq);
+                          localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                        }
+                      } catch (e) {}
+                      this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey, seq }));
+                    }
+                  } catch (e) {
+                    // ignore
+                  }
+                  return;
+                }
+                // Unknown binary message: ignore for now
+              };
+
+              if (event.data instanceof Blob) {
+                const ab = await event.data.arrayBuffer();
+                handleArrayBuffer(ab);
+              } else {
+                handleArrayBuffer(event.data as ArrayBuffer);
+              }
+              return;
+            }
+
+            const message: ServerMessage = JSON.parse(event.data as string);
             this.handleServerMessage(message);
           } catch (error) {
             logger.error('[CLIENT] Error parsing server message:', error);
@@ -81,12 +167,16 @@ export class NetworkManager {
         };
 
         this.ws.onclose = () => {
+          // eslint-disable-next-line no-console
+          console.log('[CLIENT] WebSocket closed');
           logger.info('[CLIENT] Disconnected from server');
           this.gameState.connected = false;
           this.onConnectionChange(false);
         };
 
         this.ws.onerror = (error) => {
+          // eslint-disable-next-line no-console
+          console.error('[CLIENT] WebSocket error observed:', error);
           logger.error('[CLIENT] WebSocket error:', error);
           this.gameState.connected = false;
           this.onConnectionChange(false);
@@ -238,14 +328,28 @@ export class NetworkManager {
   }
 
   private handleWorldInit(message: any) {
+  // visible debug
+  // eslint-disable-next-line no-console
+  console.log('[CLIENT] Received world_init from server; blocks=', (message.blocks || []).length);
   logger.info('[CLIENT] Received world initialization');
     this.gameState.playerId = message.playerId;
     this.gameState.worldSize = message.worldSize;
+    // inform server about already-applied chunk seqs so server can avoid resending
+    try {
+      const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+      const seqs = raw ? JSON.parse(raw) : [];
+      if (Array.isArray(seqs) && seqs.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.sendMessage({ type: 'chunk_have', seqs } as any);
+      }
+    } catch (e) {}
     // Process blocks incrementally to avoid freezing the UI
     this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: true });
   }
 
   private handleChunksUpdate(message: any) {
+  // visible debug
+  // eslint-disable-next-line no-console
+  console.log('[CLIENT] Received chunks_update; blocks=', (message.blocks || []).length);
   logger.info(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
     // Enqueue chunk updates for incremental processing
     this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: false });
@@ -312,6 +416,9 @@ export class NetworkManager {
             setTimeout(step, 16);
           }
         } else {
+          // Visible debug output so we can see processing progress in DevTools
+          // eslint-disable-next-line no-console
+          console.log(`[CLIENT] Finished incremental processing of ${total} blocks; chunks=${this.gameState.chunks.size}; blocks=${this.gameState.blocks.size}`);
           logger.info(`[CLIENT] Finished incremental processing of ${total} blocks`);
           // Increase chunkVersions for chunks modified by this item so OptimizedWorld can rebuild
           // We'll scan the processed blocks to find their chunk keys

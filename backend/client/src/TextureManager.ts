@@ -13,6 +13,8 @@ export class TextureManager {
   private textures: Map<string, THREE.Texture> = new Map();
   private blockDefs: Map<number, BlockDef> = new Map();
   private materialCache: Map<number, THREE.Material | THREE.Material[]> = new Map();
+  private atlasTexture: THREE.Texture | null = null;
+  private atlasMeta: { tileSize: number; mappings: { [blockType: number]: { u0:number; v0:number; u1:number; v1:number } } } | null = null;
 
   private constructor() {
     this.textureLoader = new THREE.TextureLoader();
@@ -101,6 +103,88 @@ export class TextureManager {
     await Promise.allSettled(promises);
   }
 
+  // Build a simple texture atlas by arranging loaded textures into a square grid.
+  // This is a simple packer that assumes all tiles are square and equal size.
+  async buildAtlas(tileSize: number = 32) {
+    // Collect entries for block types
+    const entries: Array<{ id: number; name: string; tex: THREE.Texture | undefined }> = [];
+    for (const [id, def] of this.blockDefs.entries()) {
+      // prefer 'all' then 'side' then first texture
+      const texPath = def.textures.all || def.textures.side || Object.values(def.textures)[0];
+      if (!texPath) continue;
+      const key = texPath.startsWith('/') ? texPath : texPath;
+      const tex = this.getTexture(`${def.name}_all`) || this.getTexture(`${def.name}_side`) || this.getTexture(key) || undefined;
+      entries.push({ id, name: def.name, tex });
+    }
+
+    const count = entries.length;
+    if (count === 0) return null;
+    const cols = Math.ceil(Math.sqrt(count));
+    const atlasSize = cols * tileSize;
+
+    // create canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = atlasSize;
+    canvas.height = atlasSize;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ff00ff';
+    ctx.fillRect(0,0,atlasSize,atlasSize);
+
+    const mappings: any = {};
+    for (let i = 0; i < entries.length; i++) {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const x = c * tileSize;
+      const y = r * tileSize;
+      const ent = entries[i];
+      if (ent.tex && ent.tex.image) {
+        try {
+          ctx.drawImage(ent.tex.image, x, y, tileSize, tileSize);
+        } catch (e) {
+          // drawing may fail if image not ready; attempt to use placeholder
+          ctx.fillStyle = '#888'; ctx.fillRect(x,y,tileSize,tileSize);
+        }
+      } else {
+        ctx.fillStyle = '#888'; ctx.fillRect(x,y,tileSize,tileSize);
+      }
+
+      mappings[ent.id] = {
+        u0: x / atlasSize, v0: y / atlasSize,
+        u1: (x + tileSize) / atlasSize, v1: (y + tileSize) / atlasSize
+      };
+    }
+
+    // create THREE texture from canvas
+  const atlasTex = new THREE.CanvasTexture(canvas);
+  atlasTex.magFilter = THREE.NearestFilter;
+  atlasTex.minFilter = THREE.NearestFilter;
+  atlasTex.wrapS = THREE.RepeatWrapping;
+  atlasTex.wrapT = THREE.RepeatWrapping;
+  // Canvas drawing uses top-left origin; make sure Three's UV orientation matches
+  // by disabling automatic flip on the texture.
+  atlasTex.flipY = false;
+  atlasTex.needsUpdate = true;
+
+    this.atlasTexture = atlasTex;
+    this.atlasMeta = { tileSize, mappings };
+    logger.info(`[TextureManager] Built atlas size=${atlasSize} tile=${tileSize} entries=${count}`);
+    // log a sample of mappings to help debugging
+    const sampleKeys = Object.keys(mappings).slice(0, 8);
+    for (const k of sampleKeys) {
+      const m = mappings[k];
+      logger.info(`[TextureManager] atlas mapping block=${k} -> u0=${m.u0.toFixed(3)} v0=${m.v0.toFixed(3)} u1=${m.u1.toFixed(3)} v1=${m.v1.toFixed(3)}`);
+    }
+    return { atlasTex, atlasMeta: this.atlasMeta };
+  }
+
+  getAtlasMeta() {
+    return this.atlasMeta;
+  }
+
+  getAtlasTexture() {
+    return this.atlasTexture;
+  }
+
   // Create material(s) for a block type id based on its textures
   createBlockMaterial(blockType: number): THREE.Material | THREE.Material[] {
     // return cached if present
@@ -110,8 +194,18 @@ export class TextureManager {
 
     // If 'all' provided, return single material
     if (def.textures.all) {
+      // If atlas available, use single material with atlas
+      const atlasAvailable = !!this.atlasTexture && !!this.atlasMeta && this.atlasMeta.mappings[blockType];
+      if (atlasAvailable) {
+        const mat = new THREE.MeshLambertMaterial({ map: this.atlasTexture, color: 0xffffff });
+        logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using atlas`);
+        this.materialCache.set(blockType, mat);
+        return mat;
+      }
       const tex = this.getTexture(`${def.name}_all`) || this.getTexture(def.name + '_all') || this.getTexture(def.name + '_texture') || this.getTexture(def.textures.all);
       const mat = new THREE.MeshLambertMaterial({ map: tex, color: tex ? 0xffffff : 0x8B4513 });
+      if (tex) logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using individual texture`);
+      else logger.warn(`[TextureManager] createBlockMaterial: block=${blockType} no texture found, using fallback color`);
       this.materialCache.set(blockType, mat);
       return mat;
     }

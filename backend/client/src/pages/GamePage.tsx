@@ -39,6 +39,9 @@ const GamePage: React.FC = () => {
     setError('');
 
     try {
+      // visible log to confirm connect attempts in browser DevTools
+      // eslint-disable-next-line no-console
+      console.log('[CLIENT] GamePage: attempting connect to', serverUrl);
       const manager = new NetworkManager(
         (_gameState: GameState) => {
           // State updates are handled within the Game component
@@ -56,6 +59,7 @@ const GamePage: React.FC = () => {
       setNetworkManager(manager);
     } catch (err) {
       setError('Failed to connect to server. The server might be offline or unreachable.');
+      // eslint-disable-next-line no-console
       console.error('[CLIENT] Connection error:', err);
     } finally {
       setConnecting(false);

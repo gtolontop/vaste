@@ -203,6 +203,14 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         animationFrameId = requestAnimationFrame(updateTargetedBlock);
         return;
       }
+            {/* Debug overlay - quick visibility of counts */}
+            <div style={{ position: 'absolute', left: 8, top: 8, zIndex: 9999, color: '#fff', background: 'rgba(0,0,0,0.4)', padding: '6px 8px', borderRadius: 6, fontSize: 12 }}>
+              <div>Blocks: {gameState.blocks.size}</div>
+              <div>Chunks: {gameState.chunks.size}</div>
+              <div>ChunkVersions: {gameState.chunkVersions.size}</div>
+              <div>Connected: {gameState.connected ? 'yes' : 'no'}</div>
+            </div>
+
       const raycastResult = optimizedRaycaster.raycastBlocks(camera, gameState.blocks, playerPosition, 8);
       if (raycastResult) {
         setTargetedBlock(raycastResult.blockPos.clone());
@@ -421,6 +429,12 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
       try {
         await textureManager.loadBlockDefinitions();
         await textureManager.preloadTexturesFromRegistry();
+        try {
+          await textureManager.buildAtlas(32);
+          logger.info('Texture atlas built');
+        } catch (e) {
+          logger.warn('Failed to build atlas, falling back to per-texture materials');
+        }
         logger.info('Block definitions and textures loaded successfully');
       } catch (error) {
         logger.warn('Some textures failed to load, using fallback colors');
@@ -502,6 +516,9 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
         camera={{ fov: 75, near: 0.1, far: 1000 }}
         style={{ background: '#87CEEB', width: '100%', height: '100%' }}
       >
+        {/* Add simple scene lighting to ensure meshes are visible */}
+        <ambientLight intensity={0.9} />
+        <directionalLight position={[50, 100, 20]} intensity={0.6} />
         <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
       </Canvas>
       {/* Game HUD */}
