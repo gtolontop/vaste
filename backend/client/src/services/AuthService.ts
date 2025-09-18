@@ -72,7 +72,7 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Registration error:', error);
+  console.error('[AUTH] Registration error:', error);
       return {
         success: false,
         message: 'Server connection error'
@@ -98,7 +98,7 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Login error:', error);
+  console.error('[AUTH] Login error:', error);
       return {
         success: false,
         message: 'Server connection error'
@@ -115,7 +115,7 @@ class AuthService {
         headers: this.getAuthHeaders()
       });
     } catch (error) {
-      console.error('[AUTH] Logout error:', error);
+  console.error('[AUTH] Logout error:', error);
     } finally {
       // Local cleanup
       this.removeToken();
@@ -145,7 +145,7 @@ class AuthService {
         return null;
       }
     } catch (error) {
-      console.error('[AUTH] Token verification error:', error);
+  console.error('[AUTH] Token verification error:', error);
       this.removeToken();
       this.removeStoredUser();
       return null;
@@ -168,7 +168,7 @@ class AuthService {
 
       return null;
     } catch (error) {
-      console.error('[AUTH] Profile retrieval error:', error);
+  console.error('[AUTH] Profile retrieval error:', error);
       return null;
     }
   }
@@ -190,7 +190,7 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Profile update error:', error);
+  console.error('[AUTH] Profile update error:', error);
       return {
         success: false,
         message: 'Server connection error'
@@ -209,7 +209,7 @@ class AuthService {
 
       return await response.json();
     } catch (error) {
-      console.error('[AUTH] Password change error:', error);
+  console.error('[AUTH] Password change error:', error);
       return {
         success: false,
         message: 'Server connection error'
@@ -226,7 +226,7 @@ class AuthService {
 
       return await response.json();
     } catch (error) {
-      console.error('[AUTH] Servers retrieval error:', error);
+  console.error('[AUTH] Servers retrieval error:', error);
       return {
         success: false,
         message: 'Server connection error'

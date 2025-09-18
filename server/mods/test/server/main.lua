@@ -7,17 +7,6 @@ print("Test mod server script loaded")
 -- This new API will create the folder structure and manage chunk files under that path.
 local testworld = CreateOrLoadWorld("savedworld/testworld", "flatworld")
 
--- Fill a local area for testing (generator already creates flat ground but we ensure some structures)
-FillBlocksInWorld(testworld, vec3(0, 0, 0), vec3(64, 1, 64)) -- Sol de 64x64
-
--- Quelques structures pour tester la render distance
-FillBlocksInWorld(testworld, vec3(10, 2, 10), vec3(15, 5, 15)) -- Maison 1
-FillBlocksInWorld(testworld, vec3(30, 2, 30), vec3(35, 4, 35)) -- Maison 2
-FillBlocksInWorld(testworld, vec3(50, 2, 50), vec3(55, 6, 55)) -- Tour
-
--- Structure distante pour tester la render distance
-FillBlocksInWorld(testworld, vec3(100, 2, 100), vec3(110, 10, 110)) -- Structure distante
-
 print("Medium test world created - optimized for 10 chunk render distance")
 
 -- Handle player join events

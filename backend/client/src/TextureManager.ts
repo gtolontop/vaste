@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { logger } from './utils/logger';
 
 export class TextureManager {
   private static instance: TextureManager;
@@ -37,7 +38,7 @@ export class TextureManager {
         },
         undefined,
         (error) => {
-          console.error(`Failed to load texture ${name}:`, error);
+          logger.error(`Failed to load texture ${name}:`, error);
           reject(error);
         }
       );
@@ -60,7 +61,7 @@ export class TextureManager {
 
     const promises = textureList.map(({ name, path }) => 
       this.loadTexture(name, path).catch(() => {
-        console.warn(`Optional texture ${name} not found, using fallback`);
+        logger.warn(`Optional texture ${name} not found, using fallback`);
       })
     );
 

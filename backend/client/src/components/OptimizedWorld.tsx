@@ -54,6 +54,7 @@ const isFaceVisible = (blocks: Map<string, BlockData>, x: number, y: number, z: 
 const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunkY, chunkZ, blocksLookup }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
+
   // Use the chunk's version as the rebuild trigger; this avoids expensive hashing
   const rebuildKey = `${chunkX},${chunkY},${chunkZ}:${version}`;
 
@@ -141,6 +142,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
         geometry.groups[idx].materialIndex = materialMap.get(group.blockType)!;
       });
 
+  // rebuild
       setGeometryState({ geometry, materials });
     }, 0);
 

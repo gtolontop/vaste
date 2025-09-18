@@ -263,6 +263,15 @@ class World {
       maxBounds: { x: Number.MAX_SAFE_INTEGER, y: this.height, z: Number.MAX_SAFE_INTEGER }
     };
   }
+
+  // Keep parity with in-memory World API: check for reasonable coordinates
+  isReasonablePosition(x, y, z) {
+    const MAX_COORD = 10000;
+    const MIN_COORD = -10000;
+    return x >= MIN_COORD && x <= MAX_COORD &&
+           y >= MIN_COORD && y <= MAX_COORD &&
+           z >= MIN_COORD && z <= MAX_COORD;
+  }
 }
 
 class WorldRuntime {

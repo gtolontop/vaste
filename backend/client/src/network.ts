@@ -1,5 +1,6 @@
 import { ClientMessage, ServerMessage, GameState, getBlockKey } from './types';
 import { User } from './services/auth.types';
+import { logger } from './utils/logger';
 
 // Lightweight unique id generator for action correlation (RFC4122 v4 style-ish)
 function generateId() {
@@ -50,7 +51,7 @@ export class NetworkManager {
         this.ws = new WebSocket(serverUrl);
 
         this.ws.onopen = () => {
-          console.log('[CLIENT] Connected to server');
+          logger.info('[CLIENT] Connected to server');
           
           // Send authentication info with JWT token
           if (this.authenticatedUser) {
@@ -75,18 +76,18 @@ export class NetworkManager {
             const message: ServerMessage = JSON.parse(event.data);
             this.handleServerMessage(message);
           } catch (error) {
-            console.error('[CLIENT] Error parsing server message:', error);
+            logger.error('[CLIENT] Error parsing server message:', error);
           }
         };
 
         this.ws.onclose = () => {
-          console.log('[CLIENT] Disconnected from server');
+          logger.info('[CLIENT] Disconnected from server');
           this.gameState.connected = false;
           this.onConnectionChange(false);
         };
 
         this.ws.onerror = (error) => {
-          console.error('[CLIENT] WebSocket error:', error);
+          logger.error('[CLIENT] WebSocket error:', error);
           this.gameState.connected = false;
           this.onConnectionChange(false);
           reject(error);
@@ -117,7 +118,7 @@ export class NetworkManager {
         };
       }
     } else {
-      console.warn('[CLIENT] Cannot send message: not connected');
+      logger.warn('[CLIENT] Cannot send message: not connected');
     }
   }
 
@@ -133,6 +134,32 @@ export class NetworkManager {
       const prev = this.gameState.blocks.get(key) || null;
       this.pendingActions.set(actionId, { type: 'break', key, prev });
       this.gameState.blocks.delete(key);
+      // Update chunk map
+      const cx = Math.floor(message.x / 16);
+      const cy = Math.floor(message.y / 16);
+      const cz = Math.floor(message.z / 16);
+      const chunkKey = `${cx},${cy},${cz}`;
+      const chunkMap = this.gameState.chunks.get(chunkKey);
+      if (chunkMap) {
+  // create a new Map instance to ensure React/consumers pick up the change
+  const newMap = new Map(chunkMap);
+  newMap.delete(key);
+  this.gameState.chunks.set(chunkKey, newMap);
+  const ver = this.chunkVersions.get(chunkKey) || 0;
+  this.chunkVersions.set(chunkKey, ver + 1);
+  this.gameState.chunkVersions = new Map(this.chunkVersions);
+      }
+      // Also bump neighbor chunks so face visibility in adjacent chunks updates
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const nKey = `${cx + dx},${cy + dy},${cz + dz}`;
+            const nv = this.chunkVersions.get(nKey) || 0;
+            this.chunkVersions.set(nKey, nv + 1);
+          }
+        }
+      }
+      this.gameState.chunkVersions = new Map(this.chunkVersions);
       this.onStateUpdate({ ...this.gameState });
     } else if (message.type === 'place_block') {
       const key = getBlockKey(message.x, message.y, message.z);
@@ -144,6 +171,33 @@ export class NetworkManager {
         z: (message as any).z,
         type: (message as any).blockType || 1
       });
+      // Update chunk map for optimistic placement
+      const pcx = Math.floor((message as any).x / 16);
+      const pcy = Math.floor((message as any).y / 16);
+      const pcz = Math.floor((message as any).z / 16);
+      const pChunkKey = `${pcx},${pcy},${pcz}`;
+      const existing = this.gameState.chunks.get(pChunkKey) || new Map();
+      const newChunkMap = new Map(existing);
+      newChunkMap.set(key, {
+        x: (message as any).x,
+        y: (message as any).y,
+        z: (message as any).z,
+        type: (message as any).blockType || 1
+      });
+      this.gameState.chunks.set(pChunkKey, newChunkMap);
+  const pVer = this.chunkVersions.get(pChunkKey) || 0;
+  this.chunkVersions.set(pChunkKey, pVer + 1);
+      // bump neighbors
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const nKey = `${pcx + dx},${pcy + dy},${pcz + dz}`;
+            const nv = this.chunkVersions.get(nKey) || 0;
+            this.chunkVersions.set(nKey, nv + 1);
+          }
+        }
+      }
+  this.gameState.chunkVersions = new Map(this.chunkVersions);
       this.onStateUpdate({ ...this.gameState });
     }
 
@@ -178,13 +232,13 @@ export class NetworkManager {
       case 'teleport':
         this.handleTeleport(message);
         break;
-      default:
-        console.warn('[CLIENT] Unknown server message type:', (message as any).type);
+        default:
+        logger.warn('[CLIENT] Unknown server message type:', (message as any).type);
     }
   }
 
   private handleWorldInit(message: any) {
-    console.log('[CLIENT] Received world initialization');
+  logger.info('[CLIENT] Received world initialization');
     this.gameState.playerId = message.playerId;
     this.gameState.worldSize = message.worldSize;
     // Process blocks incrementally to avoid freezing the UI
@@ -192,7 +246,7 @@ export class NetworkManager {
   }
 
   private handleChunksUpdate(message: any) {
-    console.log(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
+  logger.info(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
     // Enqueue chunk updates for incremental processing
     this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: false });
   }
@@ -206,7 +260,7 @@ export class NetworkManager {
       this.onStateUpdate({ ...this.gameState });
     }
 
-    console.log(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
+  logger.debug(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
     this.blocksProcessingQueue.push({ blocks, clearExisting: !!opts.clearExisting });
     if (!this.blocksProcessingRunning) {
       this.blocksProcessingRunning = true;
@@ -258,7 +312,7 @@ export class NetworkManager {
             setTimeout(step, 16);
           }
         } else {
-          console.log(`[CLIENT] Finished incremental processing of ${total} blocks`);
+          logger.info(`[CLIENT] Finished incremental processing of ${total} blocks`);
           // Increase chunkVersions for chunks modified by this item so OptimizedWorld can rebuild
           // We'll scan the processed blocks to find their chunk keys
           const modifiedChunks = new Set<string>();
@@ -299,7 +353,33 @@ export class NetworkManager {
     
     if (message.action === 'break') {
       this.gameState.blocks.delete(key);
-      console.log(`[CLIENT] Block broken at (${message.x}, ${message.y}, ${message.z})`);
+      // update chunk map (replace with new Map instance)
+      const cx = Math.floor(message.x / 16);
+      const cy = Math.floor(message.y / 16);
+      const cz = Math.floor(message.z / 16);
+      const chunkKey = `${cx},${cy},${cz}`;
+      const cm = this.gameState.chunks.get(chunkKey);
+      if (cm) {
+  const newCm = new Map(cm);
+  newCm.delete(key);
+  this.gameState.chunks.set(chunkKey, newCm);
+  const ver = this.chunkVersions.get(chunkKey) || 0;
+  this.chunkVersions.set(chunkKey, ver + 1);
+  this.gameState.chunkVersions = new Map(this.chunkVersions);
+        // bump neighbors
+        const [cx, cy, cz] = chunkKey.split(',').map(Number);
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dz = -1; dz <= 1; dz++) {
+              const nKey = `${cx + dx},${cy + dy},${cz + dz}`;
+              const nv = this.chunkVersions.get(nKey) || 0;
+              this.chunkVersions.set(nKey, nv + 1);
+            }
+          }
+        }
+        this.gameState.chunkVersions = new Map(this.chunkVersions);
+      }
+  logger.info(`[CLIENT] Block broken at (${message.x}, ${message.y}, ${message.z})`);
     } else if (message.action === 'place') {
       this.gameState.blocks.set(key, {
         x: message.x,
@@ -307,7 +387,28 @@ export class NetworkManager {
         z: message.z,
         type: message.blockType || 1
       });
-      console.log(`[CLIENT] Block placed at (${message.x}, ${message.y}, ${message.z})`);
+      // update chunk map
+      const pcx = Math.floor(message.x / 16);
+      const pcy = Math.floor(message.y / 16);
+      const pcz = Math.floor(message.z / 16);
+      const pChunkKey = `${pcx},${pcy},${pcz}`;
+      const existing = this.gameState.chunks.get(pChunkKey) || new Map();
+      const newMap = new Map(existing);
+      newMap.set(key, { x: message.x, y: message.y, z: message.z, type: message.blockType || 1 });
+      this.gameState.chunks.set(pChunkKey, newMap);
+  const pVer = this.chunkVersions.get(pChunkKey) || 0; this.chunkVersions.set(pChunkKey, pVer + 1);
+  // bump neighbors
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const nKey = `${pcx + dx},${pcy + dy},${pcz + dz}`;
+            const nv = this.chunkVersions.get(nKey) || 0;
+            this.chunkVersions.set(nKey, nv + 1);
+          }
+        }
+      }
+      this.gameState.chunkVersions = new Map(this.chunkVersions);
+  logger.info(`[CLIENT] Block placed at (${message.x}, ${message.y}, ${message.z})`);
     }
 
     this.onStateUpdate({ ...this.gameState });
@@ -323,19 +424,44 @@ export class NetworkManager {
     if (success) {
       // Server accepted: nothing to do, the block_update message from server will ensure consistency
       this.pendingActions.delete(actionId);
-      console.log(`[CLIENT] Block action ${actionId} confirmed by server`);
+      logger.debug(`[CLIENT] Block action ${actionId} confirmed by server`);
     } else {
       // Server rejected: rollback optimistic change
-      console.warn(`[CLIENT] Block action ${actionId} rejected: ${reason}`);
+      logger.warn(`[CLIENT] Block action ${actionId} rejected: ${reason}`);
       if (pending.type === 'break') {
         if (pending.prev) {
           this.gameState.blocks.set(pending.key, pending.prev);
-        }
-      } else if (pending.type === 'place') {
-        if (pending.prev) {
-          this.gameState.blocks.set(pending.key, pending.prev);
+          // restore to chunk map
+          const coords = pending.key.split(',').map(Number);
+          const rcx = Math.floor(coords[0] / 16);
+          const rcy = Math.floor(coords[1] / 16);
+          const rcz = Math.floor(coords[2] / 16);
+          const rChunkKey = `${rcx},${rcy},${rcz}`;
+          const existing = this.gameState.chunks.get(rChunkKey) || new Map();
+          const newMap = new Map(existing);
+          newMap.set(pending.key, pending.prev);
+          this.gameState.chunks.set(rChunkKey, newMap);
+          const rVer = this.chunkVersions.get(rChunkKey) || 0;
+          this.chunkVersions.set(rChunkKey, rVer + 1);
+          logger.debug(`[CLIENT][Network] bumped chunkVersion ${rChunkKey} -> ${rVer + 1}`);
+          this.gameState.chunkVersions = new Map(this.chunkVersions);
         } else {
           this.gameState.blocks.delete(pending.key);
+          // remove from chunk
+          const coords = pending.key.split(',').map(Number);
+          const rcx3 = Math.floor(coords[0] / 16);
+          const rcy3 = Math.floor(coords[1] / 16);
+          const rcz3 = Math.floor(coords[2] / 16);
+          const rChunkKey3 = `${rcx3},${rcy3},${rcz3}`;
+          const rcm3 = this.gameState.chunks.get(rChunkKey3);
+          if (rcm3) {
+            const newMap3 = new Map(rcm3);
+            newMap3.delete(pending.key);
+            this.gameState.chunks.set(rChunkKey3, newMap3);
+            const rv3 = this.chunkVersions.get(rChunkKey3) || 0;
+            this.chunkVersions.set(rChunkKey3, rv3 + 1);
+            this.gameState.chunkVersions = new Map(this.chunkVersions);
+          }
         }
       }
       this.pendingActions.delete(actionId);
@@ -354,7 +480,7 @@ export class NetworkManager {
     });
 
     if (!existingPlayer) {
-      console.log(`[CLIENT] Player ${message.id} joined`);
+      logger.info(`[CLIENT] Player ${message.id} joined`);
     }
 
     this.onStateUpdate({ ...this.gameState });
@@ -362,7 +488,7 @@ export class NetworkManager {
 
   private handlePlayerDisconnect(message: any) {
     this.gameState.players.delete(message.id);
-    console.log(`[CLIENT] Player ${message.id} left`);
+    logger.info(`[CLIENT] Player ${message.id} left`);
     this.onStateUpdate({ ...this.gameState });
   }
 

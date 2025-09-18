@@ -1,3 +1,21 @@
+# Node
+node_modules/
+dist/
+.env
+
+# VSCode
+.vscode/
+
+# Build artifacts
+/backend/client/dist/
+
+# Ignore saved world chunk files and savedworld folders created by mods
+**/savedworld/
+**/*.chunk
+
+# Ignore server runtime data
+/server/**/*.chunk
+/server/**/savedworld/
 # Dependencies
 node_modules/
 */node_modules/

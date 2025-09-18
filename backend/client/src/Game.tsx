@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { NetworkManager } from './network';
 import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
+import { logger } from './utils/logger';
 import { MOVE_CONFIG } from './config/movement';
 import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
@@ -420,9 +421,9 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
       
       try {
         await textureManager.preloadTextures();
-        console.log('Textures loaded successfully');
+        logger.info('Textures loaded successfully');
       } catch (error) {
-        console.warn('Some textures failed to load, using fallback colors');
+        logger.warn('Some textures failed to load, using fallback colors');
       }
       
       // Ensure minimum loading time of 1 second
