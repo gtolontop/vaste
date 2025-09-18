@@ -6,7 +6,6 @@ import { NetworkManager } from './network';
 import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
 import { MOVE_CONFIG } from './config/movement';
-import MovementDebug from './components/ui/MovementDebug';
 import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
 import { OptimizedWorld } from './components/OptimizedWorld';
@@ -46,11 +45,10 @@ const Player: React.FC<{ position: [number, number, number]; id: string; isCurre
 };
 
 // World component
-const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean; onDebugUpdate?: (vel: THREE.Vector3, boost: boolean, speed: number) => void }> = ({ 
+const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean; }> = ({ 
   gameState, 
   networkManager,
-  isPaused = false,
-  onDebugUpdate
+  isPaused = false
 }) => {
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
@@ -301,20 +299,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         z: newPos.z
       });
 
-      // Call debug callback (if provided) so parent can render overlays
-      if (onDebugUpdate) {
-        try {
-          onDebugUpdate(velocity.current.clone(), !!moveState.current.boost, velocity.current.length());
-        } catch (e) {
-          // ignore debug errors
-        }
-      }
+      // no debug callback — movement debug overlay removed
     }
   });
 
-  // Expose velocity and speed for debug overlay
-  const debugVelocity = velocity.current;
-  const currentSpeed = velocity.current.length();
+  // velocity is kept in `velocity.current` for internal use
 
   // Set initial camera position
   useEffect(() => {
@@ -376,10 +365,7 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
   const [gameState, setGameState] = useState<GameState>(networkManager.getGameState());
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  // Debug state for movement overlay
-  const [debugVel, setDebugVel] = useState({ x: 0, y: 0, z: 0 });
-  const [debugSpeed, setDebugSpeed] = useState(0);
-  const [debugBoost, setDebugBoost] = useState(false);
+  
 
   // Handle Escape key for pause menu
   useEffect(() => {
@@ -486,19 +472,8 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
         camera={{ fov: 75, near: 0.1, far: 1000 }}
         style={{ background: '#87CEEB', width: '100%', height: '100%' }}
       >
-        <World
-          gameState={gameState}
-          networkManager={networkManager}
-          isPaused={isPaused}
-          onDebugUpdate={(vel, boost, speed) => {
-            setDebugVel({ x: vel.x, y: vel.y, z: vel.z });
-            setDebugSpeed(speed);
-            setDebugBoost(boost);
-          }}
-        />
+        <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
       </Canvas>
-      {/* Movement debug overlay - visible during development */}
-      <MovementDebug velocity={debugVel} speed={debugSpeed} boost={debugBoost} />
       {/* Game HUD */}
       <GameHUD gameState={gameState} />
       
