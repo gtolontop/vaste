@@ -75,7 +75,28 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
   // Keyboard event handlers
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (isPaused) return; // Don't handle movement keys when paused
+      // If paused, ignore movement and shortcut suppression
+      if (isPaused) return;
+
+      // When the pointer is locked we want to suppress browser shortcuts
+      // so keys like Ctrl+S / Ctrl+T / Ctrl+W / Meta+... / F1-F12 don't trigger
+      // browser behavior while playing. We still allow Escape to toggle pause and
+      // avoid interfering with form inputs if any (but pointer lock normally
+      // indicates gameplay focus).
+      const isPointerLocked = !!(controlsRef.current && controlsRef.current.isLocked);
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable);
+
+      if (isPointerLocked && !isTyping) {
+        // Block common browser shortcuts when pointer locked
+        const ctrlOrMeta = event.ctrlKey || event.metaKey;
+        const key = event.key;
+        // Block function keys and ctrl/meta combos (except single Escape/Tab usage)
+        if (ctrlOrMeta || /^F\d{1,2}$/.test(event.code)) {
+          // Prevent browser default behavior for these combos
+          try { event.preventDefault(); } catch (e) { /* ignore */ }
+        }
+      }
       
       switch (event.code) {
         case 'KeyW':
@@ -113,7 +134,14 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (isPaused) return; // Don't handle movement keys when paused
-      
+      const isPointerLocked = !!(controlsRef.current && controlsRef.current.isLocked);
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable);
+      if (isPointerLocked && !isTyping) {
+        if (event.ctrlKey || event.metaKey || /^F\d{1,2}$/.test(event.code)) {
+          try { event.preventDefault(); } catch (e) { /* ignore */ }
+        }
+      }
       switch (event.code) {
         case 'KeyW':
         case 'ArrowUp':
