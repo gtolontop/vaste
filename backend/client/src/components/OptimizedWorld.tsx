@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import * as THREE from 'three';
 import { TextureManager } from '../TextureManager';
+import { logger } from '../utils/logger';
 import { Block as BlockData } from '../types';
 
 import { getDefaultMeshWorkerPool } from '../workers/meshWorkerPool';
@@ -112,7 +113,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                 if (i >= 1000) break; // avoid long loops for extremely large meshes
               }
               const uvSample = uvArr.length >= 4 ? [uvArr[0], uvArr[1], uvArr[2], uvArr[3]] : Array.from(uvArr).slice(0, 4);
-              console.debug(`[MESH] job=${jobId} pos=${posCount} verts uv=${uvArr.length/2} idx=${idxCount} maxIdxApprox=${maxIdx} uvSample=${uvSample}`);
+              logger.debug && logger.debug(`[MESH] job=${jobId} pos=${posCount} verts uv=${uvArr.length/2} idx=${idxCount} maxIdxApprox=${maxIdx} uvSample=${uvSample}`);
 
               const geometry = new THREE.BufferGeometry();
               geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
@@ -234,10 +235,10 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                 const atlasExists = !!textureManager.getAtlasTexture();
                 const atlasCount = textureManager.getAtlasMeta() && textureManager.getAtlasMeta()!.mappings ? Object.keys(textureManager.getAtlasMeta()!.mappings).length : 0;
                 const atlasInfo = atlasExists && (textureManager.getAtlasTexture() as any).image ? `image=${(textureManager.getAtlasTexture() as any).image.width}x${(textureManager.getAtlasTexture() as any).image.height}` : 'no-image';
-                console.debug(`[MESH] atlas available=${atlasExists} entries=${atlasCount} ${atlasInfo}`);
-                console.debug(`[MESH] created mesh job=${jobId} verts=${posCount} triangles=${Math.floor(idxCount/3)} maxIdx=${maxIdx} materialHasMap=${!!(mat as any).map}`);
+                logger.debug && logger.debug(`[MESH] atlas available=${atlasExists} entries=${atlasCount} ${atlasInfo}`);
+                logger.debug && logger.debug(`[MESH] created mesh job=${jobId} verts=${posCount} triangles=${Math.floor(idxCount/3)} maxIdx=${maxIdx} materialHasMap=${!!(mat as any).map}`);
               } catch (e) {
-                console.debug('[MESH] created mesh (diagnostics failed)', e);
+                logger.debug && logger.debug('[MESH] created mesh (diagnostics failed)', e);
               }
 
               if (!cancelled) {

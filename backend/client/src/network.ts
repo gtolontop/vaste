@@ -418,8 +418,17 @@ export class NetworkManager {
         } else {
           // Visible debug output so we can see processing progress in DevTools
           // eslint-disable-next-line no-console
-          console.log(`[CLIENT] Finished incremental processing of ${total} blocks; chunks=${this.gameState.chunks.size}; blocks=${this.gameState.blocks.size}`);
-          logger.info(`[CLIENT] Finished incremental processing of ${total} blocks`);
+          if (logger && (logger.debug || logger.info)) {
+            // Gate the noisy per-4k-blocks processing message behind logger.debug
+            if (logger.debug) {
+              logger.debug(`[CLIENT] Finished incremental processing of ${total} blocks; chunks=${this.gameState.chunks.size}; blocks=${this.gameState.blocks.size}`);
+            } else {
+              // Fallback to info only if debug isn't available
+              logger.info && logger.info(`[CLIENT] Finished incremental processing of ${total} blocks`);
+            }
+          } else {
+            // As a final fallback, avoid using console.log here to prevent spam.
+          }
           // Increase chunkVersions for chunks modified by this item so OptimizedWorld can rebuild
           // We'll scan the processed blocks to find their chunk keys
           const modifiedChunks = new Set<string>();
