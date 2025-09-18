@@ -14,17 +14,16 @@ import BlockOutline from './components/BlockOutline';
 import { OptimizedRaycaster } from './utils/OptimizedRaycaster';
 
 // Block component
-const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({ 
-  position, 
-  blockType = 1 
+const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({
+  position,
+  blockType = 1
 }) => {
   const textureManager = TextureManager.getInstance();
   const material = textureManager.createBlockMaterial(blockType);
 
   return (
-    <mesh position={position}>
+    <mesh position={position} material={material as any}>
       <boxGeometry args={[1, 1, 1]} />
-      <primitive object={material} attach="material" />
     </mesh>
   );
 };
@@ -420,8 +419,9 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
       const startTime = Date.now();
       
       try {
-        await textureManager.preloadTextures();
-        logger.info('Textures loaded successfully');
+        await textureManager.loadBlockDefinitions();
+        await textureManager.preloadTexturesFromRegistry();
+        logger.info('Block definitions and textures loaded successfully');
       } catch (error) {
         logger.warn('Some textures failed to load, using fallback colors');
       }

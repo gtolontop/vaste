@@ -1,0 +1,5 @@
+{
+  "id": 3,
+  "name": "grass",
+  "textures": { "top": "/blockpacks/grass/textures/grass_top.png", "side": "/blockpacks/grass/textures/grass_side.png", "bottom": "/blockpacks/grass/textures/grass_bottom.png" }
+}

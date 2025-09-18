@@ -80,21 +80,21 @@ class World {
     return buffer;
   }
 
-  // Simple flat generator: y<=1 => block 1, else 0
-  generateChunk(cx, cz) {
-    // We'll generate CHUNK_SIZE x CHUNK_SIZE x this.height but that's large; instead store a vertical column per xz
-    // For simplicity, we'll store column heights as a byte per block height for now limited to 0..255
-    // Layout: CHUNK_SIZE * CHUNK_SIZE bytes representing top-most solid height (soil top), here 1
-    const out = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
-    for (let x = 0; x < CHUNK_SIZE; x++) {
-      for (let z = 0; z < CHUNK_SIZE; z++) {
-        const idx = x * CHUNK_SIZE + z;
-        // flat: two layers (y=0 and y=1)
-        out[idx] = 2; // indicates ground exists at y=0..1 (top = 2)
+    // Simple flat generator: store top height per column. Block types are resolved dynamically
+    // according to layered rules: top = grass (id 3), 3 layers dirt (id 2), 40 layers stone (id 1)
+    generateChunk(cx, cz) {
+      const out = new Uint8Array(CHUNK_SIZE * CHUNK_SIZE);
+      // We'll set a classical flat top at y=46 (grass at y=45, dirt 42-44, stone 2-41)
+      // top value represents number of solid layers (top = highest y + 1)
+      const TOP = 46; // top value meaning highest solid block is y=45
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const idx = x * CHUNK_SIZE + z;
+          out[idx] = TOP;
+        }
       }
+      return out;
     }
-    return out;
-  }
 
   saveAll() {
     for (const [key, entry] of this.chunkCache.entries()) {
@@ -110,28 +110,78 @@ class World {
     const maxX = Math.floor((centerX + range) / CHUNK_SIZE);
     const minZ = Math.floor((centerZ - range) / CHUNK_SIZE);
     const maxZ = Math.floor((centerZ + range) / CHUNK_SIZE);
+    // We'll iterate chunks in spiral order around the player's chunk to prioritize nearby chunks
+    const centerChunkX = Math.floor(centerX / CHUNK_SIZE);
+    const centerChunkZ = Math.floor(centerZ / CHUNK_SIZE);
 
-    for (let cx = minX; cx <= maxX; cx++) {
-      for (let cz = minZ; cz <= maxZ; cz++) {
-        const buffer = this.loadChunk(cx, cz);
-        if (!buffer) continue;
-        // buffer is CHUNK_SIZE*CHUNK_SIZE bytes representing top solid height per XZ
-        for (let x = 0; x < CHUNK_SIZE; x++) {
-          for (let z = 0; z < CHUNK_SIZE; z++) {
-            const idx = x * CHUNK_SIZE + z;
-            const top = buffer[idx];
-            if (top > 0) {
-              const worldX = cx * CHUNK_SIZE + x;
-              const worldZ = cz * CHUNK_SIZE + z;
-              // generate blocks from y=0 to y=top-1
-              for (let y = 0; y < top; y++) {
-                const dx = worldX - centerX;
-                const dy = y - centerY;
-                const dz = worldZ - centerZ;
-                const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist <= range) {
-                  blocks.push({ x: worldX, y: y, z: worldZ, type: 1 });
-                }
+    // helper: generate chunk coords in an outward spiral from center within bounds
+    const spiralChunks = (minCx, maxCx, minCz, maxCz, cx0, cz0) => {
+      const coords = [];
+      const visited = new Set();
+      const maxRadius = Math.max(Math.abs(maxCx - cx0), Math.abs(minCx - cx0), Math.abs(maxCz - cz0), Math.abs(minCz - cz0));
+      coords.push([cx0, cz0]);
+      visited.add(`${cx0},${cz0}`);
+      for (let r = 1; r <= maxRadius; r++) {
+        // start at (cx0 - r, cz0 - r) and walk the perimeter clockwise
+        let x = cx0 - r;
+        let z = cz0 - r;
+        // top edge: left -> right
+        for (let i = 0; i < r * 2; i++) {
+          x++;
+          if (x >= minCx && x <= maxCx && z >= minCz && z <= maxCz) {
+            const k = `${x},${z}`;
+            if (!visited.has(k)) { coords.push([x, z]); visited.add(k); }
+          }
+        }
+        // right edge: top -> bottom
+        for (let i = 0; i < r * 2; i++) {
+          z++;
+          if (x >= minCx && x <= maxCx && z >= minCz && z <= maxCz) {
+            const k = `${x},${z}`;
+            if (!visited.has(k)) { coords.push([x, z]); visited.add(k); }
+          }
+        }
+        // bottom edge: right -> left
+        for (let i = 0; i < r * 2; i++) {
+          x--;
+          if (x >= minCx && x <= maxCx && z >= minCz && z <= maxCz) {
+            const k = `${x},${z}`;
+            if (!visited.has(k)) { coords.push([x, z]); visited.add(k); }
+          }
+        }
+        // left edge: bottom -> top
+        for (let i = 0; i < r * 2; i++) {
+          z--;
+          if (x >= minCx && x <= maxCx && z >= minCz && z <= maxCz) {
+            const k = `${x},${z}`;
+            if (!visited.has(k)) { coords.push([x, z]); visited.add(k); }
+          }
+        }
+      }
+      return coords;
+    };
+
+    const chunkCoords = spiralChunks(minX, maxX, minZ, maxZ, centerChunkX, centerChunkZ);
+    for (const [cx, cz] of chunkCoords) {
+      const buffer = this.loadChunk(cx, cz);
+      if (!buffer) continue;
+      // buffer is CHUNK_SIZE*CHUNK_SIZE bytes representing top solid height per XZ
+      for (let x = 0; x < CHUNK_SIZE; x++) {
+        for (let z = 0; z < CHUNK_SIZE; z++) {
+          const idx = x * CHUNK_SIZE + z;
+          const top = buffer[idx];
+          if (top > 0) {
+            const worldX = cx * CHUNK_SIZE + x;
+            const worldZ = cz * CHUNK_SIZE + z;
+            // generate blocks from y=0 to y=top-1 and determine their type by layer
+            for (let y = 0; y < top; y++) {
+              const dx = worldX - centerX;
+              const dy = y - centerY;
+              const dz = worldZ - centerZ;
+              const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+              if (dist <= range) {
+                const type = this._blockTypeForHeight(y, top);
+                if (type !== 0) blocks.push({ x: worldX, y: y, z: worldZ, type });
               }
             }
           }
@@ -158,7 +208,8 @@ class World {
             const worldX = cx * CHUNK_SIZE + x;
             const worldZ = cz * CHUNK_SIZE + z;
             for (let y = 0; y < top; y++) {
-              blocks.push({ x: worldX, y: y, z: worldZ, type: 1 });
+              const type = this._blockTypeForHeight(y, top);
+              if (type !== 0) blocks.push({ x: worldX, y: y, z: worldZ, type });
             }
           }
         }
@@ -249,7 +300,21 @@ class World {
     if (!buffer) return 0;
     const idx = lx * CHUNK_SIZE + lz;
     const top = buffer[idx];
-    if (y < top) return 1;
+    if (y < top) return this._blockTypeForHeight(y, top);
+    return 0;
+  }
+
+  // Decide block type given a local y and column top
+  _blockTypeForHeight(y, top) {
+    // layering rules relative to top (top is number of solid layers, highest solid y = top-1)
+    // top-most block (y === top-1) => grass (3)
+    // below top: if y >= top-4 && y < top-1 => dirt (2)  (3 layers)
+    // below that up to 40 layers => stone (1)
+    // otherwise air (0)
+    const topIndex = top - 1;
+    if (y === topIndex) return 3; // grass
+    if (y >= topIndex - 3 && y < topIndex) return 2; // dirt
+    if (y < topIndex - 3 && y >= topIndex - 43) return 1; // stone (40 layers)
     return 0;
   }
 

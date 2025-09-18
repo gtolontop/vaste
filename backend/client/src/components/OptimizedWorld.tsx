@@ -34,7 +34,7 @@ const FACE_VERTICES = [
   [[0.5, -0.5, -0.5], [-0.5, -0.5, -0.5], [-0.5, 0.5, -0.5], [0.5, 0.5, -0.5]]
 ];
 
-const FACE_UVS = [[0, 0], [1, 0], [1, 1], [0, 1]];
+const FACE_UVS = [[0, 0], [1, 0], [1, 1], [0, 1]]; // kept for reference
 
 const worldToChunk = (coord: number) => Math.floor(coord / CHUNK_SIZE);
 const getChunkKey = (cx: number, cy: number, cz: number) => `${cx},${cy},${cz}`;
@@ -85,62 +85,105 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
 
       let vertexIndex = 0;
 
-      const blocksByType = new Map<number, BlockData[]>();
-      for (const b of chunkBlocks) {
-        if (!blocksByType.has(b.type)) blocksByType.set(b.type, []);
-        blocksByType.get(b.type)!.push(b);
+      // We'll build geometry per-face and create material entries per-face (or per-block-type if single material)
+      const geometry = new THREE.BufferGeometry();
+      const materials: THREE.Material[] = [];
+      const materialMap = new Map<string, number>(); // key => materialIndex
+
+      for (const block of chunkBlocks) {
+        for (let face = 0; face < 6; face++) {
+          const dir = FACE_DIRECTIONS[face].dir;
+          const nx = block.x + dir[0];
+          const ny = block.y + dir[1];
+          const nz = block.z + dir[2];
+          if ((blocksLookup as any)(nx, ny, nz)) continue;
+
+          // Determine material for this block/face
+          const blockMat = textureManager.createBlockMaterial(block.type);
+          let matKey: string;
+          let mat: THREE.Material;
+          if (Array.isArray(blockMat)) {
+            // Use face-specific material index (face order: right,left,top,bottom,front,back)
+            matKey = `${block.type}:${face}`;
+            if (materialMap.has(matKey)) {
+              // existing material index
+              // nothing
+            } else {
+              // push specific face material
+              const faceMat = blockMat[face] as THREE.Material;
+              const mi = materials.length;
+              materials.push(faceMat);
+              materialMap.set(matKey, mi);
+            }
+            mat = materials[materialMap.get(matKey)!];
+          } else {
+            matKey = `${block.type}:all`;
+            if (!materialMap.has(matKey)) {
+              const mi = materials.length;
+              materials.push(blockMat as THREE.Material);
+              materialMap.set(matKey, mi);
+            }
+            mat = materials[materialMap.get(matKey)!];
+          }
+
+          // add face vertices
+          const fv = FACE_VERTICES[face];
+          const fn = FACE_DIRECTIONS[face].normal;
+          for (let i = 0; i < 4; i++) {
+            const v = fv[i];
+            positions.push(block.x + v[0], block.y + v[1], block.z + v[2]);
+            normals.push(fn[0], fn[1], fn[2]);
+          }
+          // compute per-vertex UVs so the top of the texture aligns with world +Y
+          for (let i = 0; i < 4; i++) {
+            const vtx = fv[i]; // local vertex coords in [-0.5,0.5]
+            // v should correspond to vertical position (y) so top of texture is at block top
+            const v = vtx[1] + 0.5; // 0..1 (bottom..top)
+
+            // u depends on the face orientation: use the horizontal axis of the face
+            let u = 0;
+            // face normal indicates which axis is perpendicular to the face
+            if (fn[1] !== 0) {
+              // top or bottom face: map u<-x, v<-z
+              u = vtx[0] + 0.5; // x -> 0..1
+              // for top face we want v to align with -z->+z ordering
+              const vv = vtx[2] + 0.5;
+              // if bottom face (fn[1] < 0) flip horizontal so texture orientation matches top face
+              if (fn[1] < 0) {
+                u = 1 - u;
+              }
+              uvs.push(u, vv);
+            } else {
+              // side faces: use the horizontal coordinate along the face as u and y as v
+              if (fn[0] !== 0) {
+                // +/-X face: u <- z
+                u = vtx[2] + 0.5;
+                // if normal points negative (left face), flip horizontally to keep same rotation
+                if (fn[0] < 0) u = 1 - u;
+              } else if (fn[2] !== 0) {
+                // +/-Z face: u <- x
+                u = vtx[0] + 0.5;
+                // invert for negative normal (back face)
+                if (fn[2] < 0) u = 1 - u;
+              }
+              uvs.push(u, v);
+            }
+          }
+
+          // create indices for this face and add a geometry group mapping to the material index
+          const startIdx = indices.length;
+          indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3);
+          geometry.addGroup(startIdx, 6, materialMap.get(matKey)!);
+          vertexIndex += 4;
+        }
       }
 
-      blocksByType.forEach((list, blockType) => {
-        const start = indices.length;
-        for (const block of list) {
-          for (let face = 0; face < 6; face++) {
-            // Check visibility via provided lookup that checks neighboring chunks as well
-            const dir = FACE_DIRECTIONS[face].dir;
-            const nx = block.x + dir[0];
-            const ny = block.y + dir[1];
-            const nz = block.z + dir[2];
-            if ((blocksLookup as any)(nx, ny, nz)) continue;
-            const fv = FACE_VERTICES[face];
-            const fn = FACE_DIRECTIONS[face].normal;
-            for (let i = 0; i < 4; i++) {
-              const v = fv[i];
-              positions.push(block.x + v[0], block.y + v[1], block.z + v[2]);
-              normals.push(fn[0], fn[1], fn[2]);
-            }
-            for (let i = 0; i < 4; i++) {
-              const uv = FACE_UVS[i];
-              uvs.push(uv[0], uv[1]);
-            }
-            indices.push(vertexIndex, vertexIndex + 1, vertexIndex + 2, vertexIndex, vertexIndex + 2, vertexIndex + 3);
-            vertexIndex += 4;
-          }
-        }
-        const count = indices.length - start;
-        if (count > 0) materialGroups.push({ start, count, blockType });
-      });
-
-      const geometry = new THREE.BufferGeometry();
       if (positions.length > 0) {
         geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
         geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
         geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
         geometry.setIndex(indices);
-        // Assign temporary material indices; we'll remap when building materials
-        materialGroups.forEach((g, idx) => geometry.addGroup(g.start, g.count, idx));
       }
-
-      const materials: THREE.Material[] = [];
-      const materialMap = new Map<number, number>();
-      materialGroups.forEach((group, idx) => {
-        if (!materialMap.has(group.blockType)) {
-          const matIdx = materials.length;
-          materialMap.set(group.blockType, matIdx);
-          materials.push(textureManager.createBlockMaterial(group.blockType) as THREE.Material);
-        }
-        // update group materialIndex to mapped value
-        geometry.groups[idx].materialIndex = materialMap.get(group.blockType)!;
-      });
 
   // rebuild
       setGeometryState({ geometry, materials });
