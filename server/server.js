@@ -486,13 +486,10 @@ class GameServer {
         };
 
         // Send initial world state with only nearby blocks
-        log(`Sending world_init to ${user.username} with ${Array.isArray(worldState.blocks) ? worldState.blocks.length : 0} blocks`);
-        this.sendToPlayer(user.id, {
-            type: 'world_init',
-            playerId: user.id,
-            blocks: worldState.blocks,
-            worldSize: worldState.worldSize
-        });
+        // Send initial blocks in small batches to avoid freezing client when processing large arrays
+        const blocksArray = Array.isArray(worldState.blocks) ? worldState.blocks : [];
+        log(`Preparing to send world_init to ${user.username} with ${blocksArray.length} blocks (will be batched)`);
+        this.sendBlocksInBatches(user.id, blocksArray, 'world_init', { playerId: user.id, worldSize: worldState.worldSize });
 
         // Send existing players to new player
         this.players.forEach((existingPlayer, id) => {
@@ -784,11 +781,33 @@ class GameServer {
         );
         
         // Envoyer les nouveaux blocs au joueur
-        log(`Sending chunks_update to player ${playerId} with ${nearbyBlocks.length} blocks`);
-        this.sendToPlayer(playerId, {
-            type: 'chunks_update',
-            blocks: nearbyBlocks
-        });
+        // Batch chunk updates as well
+        log(`Preparing to send chunks_update to player ${playerId} with ${nearbyBlocks.length} blocks (will be batched)`);
+        this.sendBlocksInBatches(playerId, nearbyBlocks, 'chunks_update');
+    }
+
+    // Send blocks in smaller batches to avoid blocking the event loop for too long
+    sendBlocksInBatches(playerId, blocks, initialType = 'chunks_update', meta = {}) {
+        if (!Array.isArray(blocks) || blocks.length === 0) return;
+
+        const BATCH_SIZE = 4096; // number of block objects per message - tuneable
+        let index = 0;
+        const total = blocks.length;
+
+        const sendNext = () => {
+            if (index >= total) return;
+            const slice = blocks.slice(index, index + BATCH_SIZE);
+            const msg = Object.assign({}, meta);
+            msg.type = index === 0 ? initialType : 'chunks_update';
+            msg.blocks = slice;
+            this.sendToPlayer(playerId, msg);
+            index += BATCH_SIZE;
+            // Schedule next batch asynchronously to allow event loop and client rendering
+            if (index < total) setTimeout(sendNext, 10); // small delay to yield frame
+        };
+
+        // Kick off
+        setImmediate(sendNext);
     }
 }
 
