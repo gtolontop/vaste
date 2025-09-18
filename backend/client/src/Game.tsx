@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { NetworkManager } from './network';
 import { GameState, getBlockKey } from './types';
 import { TextureManager } from './TextureManager';
+import { MOVE_CONFIG } from './config/movement';
+import MovementDebug from './components/ui/MovementDebug';
 import { LoadingScreen, PauseMenu } from './components/ui';
 import { GameHUD } from './components/screens';
 import { OptimizedWorld } from './components/OptimizedWorld';
@@ -44,10 +46,11 @@ const Player: React.FC<{ position: [number, number, number]; id: string; isCurre
 };
 
 // World component
-const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean }> = ({ 
+const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean; onDebugUpdate?: (vel: THREE.Vector3, boost: boolean, speed: number) => void }> = ({ 
   gameState, 
   networkManager,
-  isPaused = false
+  isPaused = false,
+  onDebugUpdate
 }) => {
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
@@ -55,6 +58,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
   // Bloc visé (pour l'outline)
   const [targetedBlock, setTargetedBlock] = useState<THREE.Vector3 | null>(null);
   
+  // Movement configuration is imported from `config/movement.ts`
+
   // Movement state
   const moveState = useRef({
     forward: false,
@@ -62,10 +67,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
     left: false,
     right: false,
     up: false,
-    down: false
+    down: false,
+    boost: false // CTRL for speed boost
   });
-  
-  const velocity = useRef(new THREE.Vector3());
+
+  const velocity = useRef(new THREE.Vector3()); // units per second
   const direction = useRef(new THREE.Vector3());
 
   // Keyboard event handlers
@@ -95,8 +101,14 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
           event.preventDefault();
           break;
         case 'ShiftLeft':
-        case 'ControlLeft':
+        case 'ShiftRight':
+          // Shift acts as crouch / move down
           moveState.current.down = true;
+          break;
+        case 'ControlLeft':
+        case 'ControlRight':
+          // Control acts as a speed boost modifier
+          moveState.current.boost = true;
           break;
       }
     };
@@ -125,8 +137,12 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
           moveState.current.up = false;
           break;
         case 'ShiftLeft':
-        case 'ControlLeft':
+        case 'ShiftRight':
           moveState.current.down = false;
+          break;
+        case 'ControlLeft':
+        case 'ControlRight':
+          moveState.current.boost = false;
           break;
       }
     };
@@ -217,18 +233,11 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
     };
   }, [camera, gl, gameState.blocks, networkManager, isPaused, playerPosition]);
 
-  // Track player movement
+  // Track player movement with acceleration and smooth deceleration (slide)
   useFrame((_, delta) => {
     if (controlsRef.current?.isLocked && !isPaused) {
-      const moveSpeed = 5.0; // blocks per second
-      const actualMoveSpeed = moveSpeed * delta;
-
-      // Reset velocity
-      velocity.current.set(0, 0, 0);
-
-      // Calculate movement direction
+      // Determine desired directional input
       direction.current.set(0, 0, 0);
-
       if (moveState.current.forward) direction.current.z -= 1;
       if (moveState.current.backward) direction.current.z += 1;
       if (moveState.current.left) direction.current.x -= 1;
@@ -236,46 +245,76 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       if (moveState.current.up) direction.current.y += 1;
       if (moveState.current.down) direction.current.y -= 1;
 
-      // Normalize and apply speed
-      if (direction.current.length() > 0) {
-        direction.current.normalize();
-        
-        // Get camera's local directions
+      // Compute current speed target (units per second)
+      let speed = MOVE_CONFIG.baseSpeed;
+      if (moveState.current.boost) speed *= MOVE_CONFIG.boostMultiplier;
+
+      // Compute world-space target velocity (units per second)
+      const targetVelocity = new THREE.Vector3(0, 0, 0);
+      if (direction.current.lengthSq() > 0) {
+        const dir = direction.current.clone().normalize();
+
+        // Camera local directions
         const cameraDirection = new THREE.Vector3();
         camera.getWorldDirection(cameraDirection);
-        
         const right = new THREE.Vector3();
         right.crossVectors(cameraDirection, camera.up).normalize();
-        
         const forward = new THREE.Vector3();
         forward.crossVectors(camera.up, right).normalize();
 
-        // Apply movement relative to camera direction
-        velocity.current.addScaledVector(forward, -direction.current.z * actualMoveSpeed);
-        velocity.current.addScaledVector(right, direction.current.x * actualMoveSpeed);
-        velocity.current.y += direction.current.y * actualMoveSpeed;
+        // Compose horizontal movement relative to camera
+        targetVelocity.addScaledVector(forward, -dir.z * speed);
+        targetVelocity.addScaledVector(right, dir.x * speed);
 
-        // Move camera
-        camera.position.add(velocity.current);
+        // Vertical movement is direct (up/down)
+        targetVelocity.y = dir.y * speed;
+      }
 
-        // Update player position tracking
-        const newPos = new THREE.Vector3(
-          camera.position.x,
-          camera.position.y,
-          camera.position.z
-        );
-        setPlayerPosition(newPos);
+      // Move velocity toward target using max acceleration per frame
+      const maxStep = MOVE_CONFIG.acceleration * delta; // units per second change allowed this frame
+      const diff = targetVelocity.clone().sub(velocity.current);
+      const diffLen = diff.length();
+      if (diffLen <= maxStep || maxStep <= 0) {
+        // we can reach target this frame
+        velocity.current.copy(targetVelocity);
+      } else {
+        // move toward target by maxStep
+        velocity.current.add(diff.normalize().multiplyScalar(maxStep));
+      }
 
-        // Send movement update to server
-        networkManager.sendMessage({
-          type: 'player_move',
-          x: newPos.x,
-          y: newPos.y,
-          z: newPos.z
-        });
+  // Apply translation: velocity is units/sec, so multiply by delta
+  camera.position.add(velocity.current.clone().multiplyScalar(delta));
+
+      // Update player position tracking
+      const newPos = new THREE.Vector3(
+        camera.position.x,
+        camera.position.y,
+        camera.position.z
+      );
+      setPlayerPosition(newPos);
+
+      // Send movement update to server
+      networkManager.sendMessage({
+        type: 'player_move',
+        x: newPos.x,
+        y: newPos.y,
+        z: newPos.z
+      });
+
+      // Call debug callback (if provided) so parent can render overlays
+      if (onDebugUpdate) {
+        try {
+          onDebugUpdate(velocity.current.clone(), !!moveState.current.boost, velocity.current.length());
+        } catch (e) {
+          // ignore debug errors
+        }
       }
     }
   });
+
+  // Expose velocity and speed for debug overlay
+  const debugVelocity = velocity.current;
+  const currentSpeed = velocity.current.length();
 
   // Set initial camera position
   useEffect(() => {
@@ -337,6 +376,10 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
   const [gameState, setGameState] = useState<GameState>(networkManager.getGameState());
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  // Debug state for movement overlay
+  const [debugVel, setDebugVel] = useState({ x: 0, y: 0, z: 0 });
+  const [debugSpeed, setDebugSpeed] = useState(0);
+  const [debugBoost, setDebugBoost] = useState(false);
 
   // Handle Escape key for pause menu
   useEffect(() => {
@@ -443,9 +486,19 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
         camera={{ fov: 75, near: 0.1, far: 1000 }}
         style={{ background: '#87CEEB', width: '100%', height: '100%' }}
       >
-        <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
+        <World
+          gameState={gameState}
+          networkManager={networkManager}
+          isPaused={isPaused}
+          onDebugUpdate={(vel, boost, speed) => {
+            setDebugVel({ x: vel.x, y: vel.y, z: vel.z });
+            setDebugSpeed(speed);
+            setDebugBoost(boost);
+          }}
+        />
       </Canvas>
-      
+      {/* Movement debug overlay - visible during development */}
+      <MovementDebug velocity={debugVel} speed={debugSpeed} boost={debugBoost} />
       {/* Game HUD */}
       <GameHUD gameState={gameState} />
       
