@@ -8,4 +8,5 @@ author("vaste")
 
 load_client_script("client/main.lua")
 -- try Lua first (requires fengari); fallback to JS if Lua fails or is unavailable
+load_server_script("server/debug_print.lua")
 load_server_script("server/main.lua")

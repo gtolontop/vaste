@@ -7,6 +7,8 @@ print("Test mod server script loaded")
 -- This new API will create the folder structure and manage chunk files under that path.
 local testworld = CreateOrLoadWorld("savedworld/testworld", "flatworld")
 
+print("Test world created or loaded at 'savedworld/testworld'")
+
 -- Handle player join events
 AddEventListener("onPlayerJoin", function(player)
     local playerEntity = GetPlayerEntity(player)

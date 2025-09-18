@@ -269,6 +269,8 @@ class GameServer {
         this._nextChunkSequence = 1; // global incrementing sequence for chunk messages
 
         this.options = options || {};
+    // Provide a log method so subsystems (mods) can route logs through the server logger
+    this.log = (msg, level) => log(msg, level);
         // Initialize modding system lazily; in headless mode we may skip mod loading
         this.modSystem = new VasteModSystem(this);
 
@@ -1022,8 +1024,7 @@ class GameServer {
             const msg = Object.assign({}, meta);
             msg.type = index === 0 ? initialType : 'chunks_update';
             msg.blocks = slice;
-            // debug log: report batch being sent
-            try { log(`Sending ${msg.type} to player ${playerId} with ${slice.length} blocks`); } catch (e) {}
+            // Batched send; avoid noisy per-batch logging to reduce console spam.
             this.sendToPlayer(playerId, msg);
             index += BATCH_SIZE;
             // Schedule next batch asynchronously to allow event loop and client rendering
