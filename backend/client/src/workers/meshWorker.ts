@@ -5,9 +5,12 @@
 
 type Block = { x: number; y: number; z: number; type: number };
 
+interface AtlasTile { u0: number; v0: number; u1: number; v1: number }
+
 interface AtlasMeta {
   tileSize: number;
-  mappings: { [blockType: number]: { u0: number; v0: number; u1: number; v1: number } };
+  // mappings can be either a single tile (legacy) or per-face tiles
+  mappings: { [blockType: number]: AtlasTile | { all?: AtlasTile; top?: AtlasTile; bottom?: AtlasTile; side?: AtlasTile } };
 }
 
 interface MeshRequest {
@@ -96,11 +99,87 @@ onmessage = function(ev: MessageEvent) {
             normals.push(normal[0], normal[1], normal[2]);
           }
 
-          // UVs: atlas mapping if present, otherwise full quad
+          // UVs: atlas mapping if present. atlasMeta.mappings may be legacy single-tile
+          // or a per-face mapping object. Handle both and compute per-corner UVs so
+          // the V axis always maps world Y (up) -> texture top.
+          let pushed = false;
           if (msg.atlasMeta && msg.atlasMeta.mappings && msg.atlasMeta.mappings[t]) {
-            const m = msg.atlasMeta.mappings[t];
-            uvs.push(m.u0, m.v0, m.u1, m.v0, m.u1, m.v1, m.u0, m.v1);
-          } else {
+            const mapEntry = msg.atlasMeta.mappings[t] as any;
+            // if legacy single tile (has u0), use it with per-corner orientation
+            if (mapEntry.u0 !== undefined) {
+              const m = mapEntry as AtlasTile;
+              // corners order -> map so that v corresponds to y (top corners get v1)
+                for (let ci = 0; ci < 4; ci++) {
+                  const cx = corners[ci][0];
+                  const cy = corners[ci][1];
+                  const cz = corners[ci][2];
+                  let uLocal = 0;
+                  let vLocal = 0;
+                  // Determine local UV axes per face so V always maps to world Y (up)
+                  switch (face) {
+                    case 0: // +X face: U <- +Z, V <- +Y (flip V for correct orientation)
+                      uLocal = cz - bz;
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 1: // -X face: U <- -Z, V <- +Y (flip V)
+                      uLocal = 1 - (cz - bz);
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 2: // +Y top: U <- +X, V <- +Z
+                      uLocal = cx - bx;
+                      vLocal = cz - bz;
+                      break;
+                    case 3: // -Y bottom: U <- +X, V <- -Z
+                      uLocal = cx - bx;
+                      vLocal = 1 - (cz - bz);
+                      break;
+                    case 4: // +Z face: U <- -X, V <- +Y (flip V)
+                      uLocal = 1 - (cx - bx);
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 5: // -Z face: U <- +X, V <- +Y (flip V)
+                      uLocal = cx - bx;
+                      vLocal = 1 - (cy - by);
+                      break;
+                  }
+                  const u = m.u0 + uLocal * (m.u1 - m.u0);
+                  const v = m.v0 + vLocal * (m.v1 - m.v0);
+                  uvs.push(u, v);
+                }
+              pushed = true;
+            } else {
+              // choose face-specific mapping: prefer explicit face mapping, then side, then all
+              const per = mapEntry as { all?: AtlasTile; top?: AtlasTile; bottom?: AtlasTile; side?: AtlasTile };
+              let tile: AtlasTile | undefined = undefined;
+              if (per.all) tile = per.all;
+              else if (face === 2 && per.top) tile = per.top;
+              else if (face === 3 && per.bottom) tile = per.bottom;
+              else if (per.side) tile = per.side;
+              if (!tile) tile = per.top || per.side || per.bottom || per.all;
+              if (tile) {
+                for (let ci = 0; ci < 4; ci++) {
+                  const cx = corners[ci][0];
+                  const cy = corners[ci][1];
+                  const cz = corners[ci][2];
+                  let uLocal = 0;
+                  let vLocal = 0;
+                  switch (face) {
+                    case 0: uLocal = cz - bz; vLocal = 1 - (cy - by); break;
+                    case 1: uLocal = 1 - (cz - bz); vLocal = 1 - (cy - by); break;
+                    case 2: uLocal = cx - bx; vLocal = cz - bz; break;
+                    case 3: uLocal = cx - bx; vLocal = 1 - (cz - bz); break;
+                    case 4: uLocal = 1 - (cx - bx); vLocal = 1 - (cy - by); break;
+                    case 5: uLocal = cx - bx; vLocal = 1 - (cy - by); break;
+                  }
+                  const u = tile.u0 + uLocal * (tile.u1 - tile.u0);
+                  const v = tile.v0 + vLocal * (tile.v1 - tile.v0);
+                  uvs.push(u, v);
+                }
+                pushed = true;
+              }
+            }
+          }
+          if (!pushed) {
             uvs.push(0,0,1,0,1,1,0,1);
           }
 

@@ -14,7 +14,8 @@ export class TextureManager {
   private blockDefs: Map<number, BlockDef> = new Map();
   private materialCache: Map<number, THREE.Material | THREE.Material[]> = new Map();
   private atlasTexture: THREE.Texture | null = null;
-  private atlasMeta: { tileSize: number; mappings: { [blockType: number]: { u0:number; v0:number; u1:number; v1:number } } } | null = null;
+  // mappings: blockType -> per-face mappings (all/top/side/bottom)
+  private atlasMeta: { tileSize: number; mappings: { [blockType: number]: { all?: { u0:number; v0:number; u1:number; v1:number }; top?: { u0:number; v0:number; u1:number; v1:number }; bottom?: { u0:number; v0:number; u1:number; v1:number }; side?: { u0:number; v0:number; u1:number; v1:number } } } } | null = null;
 
   private constructor() {
     this.textureLoader = new THREE.TextureLoader();
@@ -75,7 +76,8 @@ export class TextureManager {
       // fallback: ensure existing built-in ids are present
       this.blockDefs.set(1, { id: 1, name: 'stone', textures: { all: '/textures/stone.png' } });
       this.blockDefs.set(2, { id: 2, name: 'dirt', textures: { all: '/textures/dirt.png' } });
-      this.blockDefs.set(3, { id: 3, name: 'grass', textures: { top: '/textures/grass_top.png', side: '/textures/grass_side.png', bottom: '/textures/dirt.png' } });
+  // Use explicit grass_bottom for the underside of grass blocks to match expectations
+  this.blockDefs.set(3, { id: 3, name: 'grass', textures: { top: '/textures/grass_top.png', side: '/textures/grass_side.png', bottom: '/textures/grass_bottom.png' } });
       this.blockDefs.set(4, { id: 4, name: 'wood', textures: { all: '/textures/wood.png' } });
       this.blockDefs.set(5, { id: 5, name: 'sand', textures: { all: '/textures/sand.png' } });
     }
@@ -106,15 +108,28 @@ export class TextureManager {
   // Build a simple texture atlas by arranging loaded textures into a square grid.
   // This is a simple packer that assumes all tiles are square and equal size.
   async buildAtlas(tileSize: number = 32) {
-    // Collect entries for block types
-    const entries: Array<{ id: number; name: string; tex: THREE.Texture | undefined }> = [];
+    // Collect entries for block types. We create one atlas slot per distinct face texture
+    // (e.g. grass has top/side/bottom). mappings will record per-block per-face UVs.
+    const entries: Array<{ id: number; name: string; face: string; tex: THREE.Texture | undefined }> = [];
     for (const [id, def] of this.blockDefs.entries()) {
-      // prefer 'all' then 'side' then first texture
-      const texPath = def.textures.all || def.textures.side || Object.values(def.textures)[0];
-      if (!texPath) continue;
-      const key = texPath.startsWith('/') ? texPath : texPath;
-      const tex = this.getTexture(`${def.name}_all`) || this.getTexture(`${def.name}_side`) || this.getTexture(key) || undefined;
-      entries.push({ id, name: def.name, tex });
+      // If 'all' present, we only need a single slot
+      if (def.textures.all) {
+        const key = def.textures.all.startsWith('/') ? def.textures.all : `/${def.textures.all}`;
+        const tex = this.getTexture(`${def.name}_all`) || this.getTexture(key) || undefined;
+        if (tex) entries.push({ id, name: def.name, face: 'all', tex });
+        else entries.push({ id, name: def.name, face: 'all', tex: undefined });
+        continue;
+      }
+
+      // otherwise consider top/side/bottom slots (side will be used for 4 faces)
+      const faces = ['top', 'side', 'bottom'];
+      for (const f of faces) {
+        const p = def.textures[f] || def.textures['side'] || def.textures['all'];
+        if (!p) continue;
+        const key = p.startsWith('/') ? p : `/${p}`;
+        const tex = this.getTexture(`${def.name}_${f}`) || this.getTexture(key) || undefined;
+        entries.push({ id, name: def.name, face: f, tex });
+      }
     }
 
     const count = entries.length;
@@ -126,9 +141,9 @@ export class TextureManager {
     const canvas = document.createElement('canvas');
     canvas.width = atlasSize;
     canvas.height = atlasSize;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#ff00ff';
-    ctx.fillRect(0,0,atlasSize,atlasSize);
+  const ctx = canvas.getContext('2d')!;
+  // Clear canvas to transparent so any texture transparency is preserved.
+  ctx.clearRect(0, 0, atlasSize, atlasSize);
 
     const mappings: any = {};
     for (let i = 0; i < entries.length; i++) {
@@ -148,7 +163,9 @@ export class TextureManager {
         ctx.fillStyle = '#888'; ctx.fillRect(x,y,tileSize,tileSize);
       }
 
-      mappings[ent.id] = {
+      // Initialize mapping container for this block id
+      if (!mappings[ent.id]) mappings[ent.id] = {};
+      mappings[ent.id][ent.face] = {
         u0: x / atlasSize, v0: y / atlasSize,
         u1: (x + tileSize) / atlasSize, v1: (y + tileSize) / atlasSize
       };
@@ -172,7 +189,11 @@ export class TextureManager {
     const sampleKeys = Object.keys(mappings).slice(0, 8);
     for (const k of sampleKeys) {
       const m = mappings[k];
-      logger.info(`[TextureManager] atlas mapping block=${k} -> u0=${m.u0.toFixed(3)} v0=${m.v0.toFixed(3)} u1=${m.u1.toFixed(3)} v1=${m.v1.toFixed(3)}`);
+      // m may contain per-face entries; pick the first available mapping
+      const first = Object.values(m)[0] as any;
+      if (first) {
+        logger.info(`[TextureManager] atlas mapping block=${k} -> u0=${first.u0.toFixed(3)} v0=${first.v0.toFixed(3)} u1=${first.u1.toFixed(3)} v1=${first.v1.toFixed(3)}`);
+      }
     }
     return { atlasTex, atlasMeta: this.atlasMeta };
   }
@@ -192,26 +213,69 @@ export class TextureManager {
     const def = this.blockDefs.get(blockType);
     if (!def) return new THREE.MeshLambertMaterial({ color: 0x8B4513 });
 
-    // If 'all' provided, return single material
-    if (def.textures.all) {
-      // If atlas available, use single material with atlas
-      const atlasAvailable = !!this.atlasTexture && !!this.atlasMeta && this.atlasMeta.mappings[blockType];
-      if (atlasAvailable) {
-        const mat = new THREE.MeshLambertMaterial({ map: this.atlasTexture, color: 0xffffff });
-        logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using atlas`);
+      // If 'all' provided, return single material
+      if (def.textures.all) {
+        // If atlas available, use single material with atlas (clone texture and set offset/repeat)
+        const atlasAvailable = !!this.atlasTexture && !!this.atlasMeta && !!this.atlasTexture.image && !!this.atlasMeta.mappings[blockType] && !!this.atlasMeta.mappings[blockType].all;
+        if (atlasAvailable) {
+          const m = this.atlasMeta!;
+          const map = this.atlasTexture!;
+          const tile = m.mappings[blockType].all;
+          if (tile && map.image) {
+            const texClone = map.clone();
+            texClone.offset.set(tile.u0, tile.v0);
+            texClone.repeat.set(tile.u1 - tile.u0, tile.v1 - tile.v0);
+            texClone.needsUpdate = true;
+            const mat = new THREE.MeshLambertMaterial({ map: texClone, color: 0xffffff });
+            logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using atlas(all)`);
+            this.materialCache.set(blockType, mat);
+            return mat;
+          }
+          logger.warn(`[TextureManager] createBlockMaterial: block=${blockType} atlas available but missing 'all' mapping`);
+        }
+
+        // fallback: individual texture (non-atlas)
+        const tex = this.getTexture(`${def.name}_all`) || this.getTexture(def.name + '_all') || this.getTexture(def.name + '_texture') || this.getTexture(def.textures.all);
+        const mat = new THREE.MeshLambertMaterial({ map: tex, color: tex ? 0xffffff : 0x8B4513 });
+        if (tex) logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using individual texture`);
+        else logger.warn(`[TextureManager] createBlockMaterial: block=${blockType} no texture found, using fallback color`);
         this.materialCache.set(blockType, mat);
         return mat;
       }
-      const tex = this.getTexture(`${def.name}_all`) || this.getTexture(def.name + '_all') || this.getTexture(def.name + '_texture') || this.getTexture(def.textures.all);
-      const mat = new THREE.MeshLambertMaterial({ map: tex, color: tex ? 0xffffff : 0x8B4513 });
-      if (tex) logger.info(`[TextureManager] createBlockMaterial: block=${blockType} using individual texture`);
-      else logger.warn(`[TextureManager] createBlockMaterial: block=${blockType} no texture found, using fallback color`);
-      this.materialCache.set(blockType, mat);
-      return mat;
-    }
 
     // Per-face materials: right, left, top, bottom, front, back (order used by Three)
     const faces = ['side', 'side', 'top', 'bottom', 'side', 'side'];
+    // If atlas available, create per-face materials using the atlas and UV offsets
+    const atlasAvailable = !!this.atlasTexture && !!this.atlasMeta && !!this.atlasTexture.image && !!this.atlasMeta.mappings[blockType];
+    if (atlasAvailable) {
+      const m = this.atlasMeta!;
+      const map = this.atlasTexture!;
+      const faceKeys = faces as Array<'side'|'top'|'bottom'>;
+      const matsArr: THREE.Material[] = faceKeys.map((faceKey) => {
+        // determine mapping: prefer explicit face mapping, then side, then all
+        const blockMap = m.mappings[blockType] || {} as any;
+        const mapping = blockMap[faceKey] || blockMap['side'] || blockMap['all'];
+        if (!mapping || !map.image) {
+          // fallback to color material so we don't show broken textures
+          return new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+        }
+        try {
+          // Clone the atlas texture and set offset/repeat so this material samples the correct tile.
+          const texClone = map.clone();
+          texClone.offset.set(mapping.u0, mapping.v0);
+          texClone.repeat.set(mapping.u1 - mapping.u0, mapping.v1 - mapping.v0);
+          texClone.needsUpdate = true;
+          const mat = new THREE.MeshLambertMaterial({ map: texClone, color: 0xffffff });
+          return mat;
+        } catch (e) {
+          logger.warn(`[TextureManager] failed to clone atlas texture for block=${blockType} face=${faceKey}`, e);
+          return new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+        }
+      });
+      this.materialCache.set(blockType, matsArr);
+      return matsArr;
+    }
+
     const mats: THREE.Material[] = faces.map((faceKey) => {
       let tpath = def.textures[faceKey];
       if (!tpath) {
