@@ -4,10 +4,13 @@ import { TextureManager } from '../TextureManager';
 import { Block as BlockData } from '../types';
 
 interface ChunkProps {
-  blocks: Map<string, BlockData>;
+  chunkMap: Map<string, BlockData>;
+  version: number;
   chunkX: number;
   chunkY: number;
   chunkZ: number;
+  // function to check whether a block exists at given world coords
+  blocksLookup: (x: number, y: number, z: number) => boolean;
 }
 
 const CHUNK_SIZE = 16;
@@ -48,20 +51,11 @@ const isFaceVisible = (blocks: Map<string, BlockData>, x: number, y: number, z: 
   return !isBlockSolid(blocks, x + dir[0], y + dir[1], z + dir[2]);
 };
 
-const OptimizedChunk: React.FC<ChunkProps> = ({ blocks, chunkX, chunkY, chunkZ }) => {
+const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunkY, chunkZ, blocksLookup }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
-  // Create a small hash string representing the blocks in this chunk.
-  // We include blocks.size as a dependency so mutations that change size re-run; it's a practical compromise.
-  const chunkHash = useMemo(() => {
-    const keys: string[] = [];
-    for (const b of blocks.values()) {
-      if (worldToChunk(b.x) === chunkX && worldToChunk(b.y) === chunkY && worldToChunk(b.z) === chunkZ && b.type !== 0) {
-        keys.push(`${b.x},${b.y},${b.z}:${b.type}`);
-      }
-    }
-    return keys.sort().join('|');
-  }, [blocks.size, chunkX, chunkY, chunkZ]);
+  // Use the chunk's version as the rebuild trigger; this avoids expensive hashing
+  const rebuildKey = `${chunkX},${chunkY},${chunkZ}:${version}`;
 
   const [geometryState, setGeometryState] = useState<{ geometry: THREE.BufferGeometry; materials: THREE.Material[] } | null>(null);
 
@@ -73,12 +67,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ blocks, chunkX, chunkY, chunkZ }
 
       const textureManager = TextureManager.getInstance();
 
-      const chunkBlocks: BlockData[] = [];
-      for (const b of blocks.values()) {
-        if (worldToChunk(b.x) === chunkX && worldToChunk(b.y) === chunkY && worldToChunk(b.z) === chunkZ && b.type !== 0) {
-          chunkBlocks.push(b);
-        }
-      }
+  const chunkBlocks: BlockData[] = (Array.from(chunkMap.values()) as unknown as BlockData[]).filter(b => b.type !== 0);
 
       // If no blocks, set an empty geometry to allow unmounting
       if (chunkBlocks.length === 0) {
@@ -105,7 +94,12 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ blocks, chunkX, chunkY, chunkZ }
         const start = indices.length;
         for (const block of list) {
           for (let face = 0; face < 6; face++) {
-            if (!isFaceVisible(blocks, block.x, block.y, block.z, face)) continue;
+            // Check visibility via provided lookup that checks neighboring chunks as well
+            const dir = FACE_DIRECTIONS[face].dir;
+            const nx = block.x + dir[0];
+            const ny = block.y + dir[1];
+            const nz = block.z + dir[2];
+            if ((blocksLookup as any)(nx, ny, nz)) continue;
             const fv = FACE_VERTICES[face];
             const fn = FACE_DIRECTIONS[face].normal;
             for (let i = 0; i < 4; i++) {
@@ -165,7 +159,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ blocks, chunkX, chunkY, chunkZ }
       }
     };
     // chunkHash and blocks.size are the main signals to rebuild
-  }, [chunkHash, blocks.size, chunkX, chunkY, chunkZ]);
+  }, [rebuildKey, chunkX, chunkY, chunkZ, chunkMap.size, version]);
 
   if (!geometryState) return null;
   if (!geometryState.geometry.attributes || !geometryState.geometry.attributes.position) return null;
@@ -174,22 +168,18 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ blocks, chunkX, chunkY, chunkZ }
 };
 
 interface OptimizedWorldProps {
-  blocks: Map<string, BlockData>;
+  chunks: Map<string, Map<string, BlockData>>;
+  chunkVersions: Map<string, number>;
   playerPosition: THREE.Vector3;
 }
 
-export const OptimizedWorld: React.FC<OptimizedWorldProps> = ({ blocks, playerPosition }) => {
+export const OptimizedWorld: React.FC<OptimizedWorldProps> = ({ chunks, chunkVersions, playerPosition }) => {
   const existingChunks = useMemo(() => {
-    const m = new Map<string, { chunkX: number; chunkY: number; chunkZ: number }>();
-    for (const b of blocks.values()) {
-      const cx = worldToChunk(b.x);
-      const cy = worldToChunk(b.y);
-      const cz = worldToChunk(b.z);
-      const key = getChunkKey(cx, cy, cz);
-      if (!m.has(key)) m.set(key, { chunkX: cx, chunkY: cy, chunkZ: cz });
-    }
-    return Array.from(m.values());
-  }, [blocks.size]);
+    return Array.from(chunks.keys()).map(k => {
+      const [cx, cy, cz] = k.split(',').map(Number);
+      return { chunkX: cx, chunkY: cy, chunkZ: cz, key: k };
+    });
+  }, [chunks.size]);
 
   const visibleChunks = useMemo(() => {
     const pcx = worldToChunk(playerPosition.x);
@@ -204,8 +194,19 @@ export const OptimizedWorld: React.FC<OptimizedWorldProps> = ({ blocks, playerPo
     return arr;
   }, [existingChunks, playerPosition.x, playerPosition.y, playerPosition.z]);
 
-  return <>{visibleChunks.map(({ chunkX, chunkY, chunkZ }) => (
-    <OptimizedChunk key={getChunkKey(chunkX, chunkY, chunkZ)} blocks={blocks} chunkX={chunkX} chunkY={chunkY} chunkZ={chunkZ} />
+  // blocksLookup checks whether a block exists at world coords by querying the chunks map
+  const blocksLookup = (x: number, y: number, z: number) => {
+    const cx = worldToChunk(x);
+    const cy = worldToChunk(y);
+    const cz = worldToChunk(z);
+    const key = getChunkKey(cx, cy, cz);
+    const cm = chunks.get(key);
+    if (!cm) return false;
+    return cm.has(`${x},${y},${z}`);
+  };
+
+  return <>{visibleChunks.map(({ chunkX, chunkY, chunkZ, key }) => (
+    <OptimizedChunk key={key} blocksLookup={blocksLookup} chunkMap={chunks.get(key)!} version={chunkVersions.get(key) || 0} chunkX={chunkX} chunkY={chunkY} chunkZ={chunkZ} />
   ))}</>;
 };
 

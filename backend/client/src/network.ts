@@ -28,6 +28,8 @@ export class NetworkManager {
       players: new Map(),
       blocks: new Map(),
       worldSize: 16,
+      chunks: new Map(),
+      chunkVersions: new Map(),
       connected: false,
       playerPosition: null
     };
@@ -35,6 +37,12 @@ export class NetworkManager {
     this.onConnectionChange = onConnectionChange;
     this.authenticatedUser = user || null;
   }
+
+  // Queue for incremental block processing to avoid blocking the main thread
+  private blocksProcessingQueue: Array<{ blocks: any[]; clearExisting?: boolean }> = [];
+  private blocksProcessingRunning: boolean = false;
+  // Per-chunk version counters to trigger chunk rebuilds only when necessary
+  private chunkVersions: Map<string, number> = new Map();
 
   connect(serverUrl: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -179,27 +187,111 @@ export class NetworkManager {
     console.log('[CLIENT] Received world initialization');
     this.gameState.playerId = message.playerId;
     this.gameState.worldSize = message.worldSize;
-    this.gameState.blocks.clear();
-
-    // Load blocks
-    message.blocks.forEach((block: any) => {
-      const key = getBlockKey(block.x, block.y, block.z);
-      this.gameState.blocks.set(key, block);
-    });
-
-    this.onStateUpdate({ ...this.gameState });
+    // Process blocks incrementally to avoid freezing the UI
+    this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: true });
   }
 
   private handleChunksUpdate(message: any) {
     console.log(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
-    
-    // Ajouter/mettre à jour les nouveaux blocs (ne pas clear la map existante)
-    message.blocks.forEach((block: any) => {
-      const key = getBlockKey(block.x, block.y, block.z);
-      this.gameState.blocks.set(key, block);
-    });
+    // Enqueue chunk updates for incremental processing
+    this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: false });
+  }
 
-    this.onStateUpdate({ ...this.gameState });
+  // Add blocks to the processing queue and start processing if not already running
+  private enqueueBlocksForProcessing(blocks: any[], opts: { clearExisting?: boolean } = {}) {
+    if (!Array.isArray(blocks) || blocks.length === 0) return;
+    if (opts.clearExisting) {
+      // Clear existing map immediately to avoid mixing states while we refill
+      this.gameState.blocks.clear();
+      this.onStateUpdate({ ...this.gameState });
+    }
+
+    console.log(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
+    this.blocksProcessingQueue.push({ blocks, clearExisting: !!opts.clearExisting });
+    if (!this.blocksProcessingRunning) {
+      this.blocksProcessingRunning = true;
+      this.processBlocksQueue();
+    }
+  }
+
+  // Process queued block arrays in small batches per animation frame
+  private processBlocksQueue() {
+    const BATCH_PER_FRAME = 512; // tuneable: number of blocks processed per frame
+
+    const processNextItem = () => {
+      const item = this.blocksProcessingQueue.shift();
+      if (!item) {
+        this.blocksProcessingRunning = false;
+        return;
+      }
+
+      const blocks = item.blocks;
+      let idx = 0;
+      const total = blocks.length;
+
+      const step = () => {
+        const end = Math.min(idx + BATCH_PER_FRAME, total);
+        for (; idx < end; idx++) {
+          const block = blocks[idx];
+          const key = getBlockKey(block.x, block.y, block.z);
+          // Legacy flat map
+          this.gameState.blocks.set(key, block);
+
+          // Chunked storage
+          const cx = Math.floor(block.x / 16);
+          const cy = Math.floor(block.y / 16);
+          const cz = Math.floor(block.z / 16);
+          const chunkKey = `${cx},${cy},${cz}`;
+          if (!this.gameState.chunks.has(chunkKey)) this.gameState.chunks.set(chunkKey, new Map());
+          const chunkMap = this.gameState.chunks.get(chunkKey)!;
+          chunkMap.set(key, block);
+          // mark chunk version increased (we'll increase when batch completes to avoid thrashing)
+        }
+
+        // Notify UI of partial progress so meshes/visibility can update gradually
+        this.onStateUpdate({ ...this.gameState });
+
+        if (idx < total) {
+          if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+            (window as any).requestAnimationFrame(step);
+          } else {
+            setTimeout(step, 16);
+          }
+        } else {
+          console.log(`[CLIENT] Finished incremental processing of ${total} blocks`);
+          // Increase chunkVersions for chunks modified by this item so OptimizedWorld can rebuild
+          // We'll scan the processed blocks to find their chunk keys
+          const modifiedChunks = new Set<string>();
+          for (const b of blocks) {
+            const cx = Math.floor(b.x / 16);
+            const cy = Math.floor(b.y / 16);
+            const cz = Math.floor(b.z / 16);
+            modifiedChunks.add(`${cx},${cy},${cz}`);
+          }
+          for (const ck of modifiedChunks) {
+            const ver = this.chunkVersions.get(ck) || 0;
+            this.chunkVersions.set(ck, ver + 1);
+          }
+
+          // Update public chunkVersions and notify UI of final state after finishing the item
+          this.gameState.chunkVersions = new Map(this.chunkVersions);
+          this.onStateUpdate({ ...this.gameState });
+
+          // Finished this item, continue with next in queue after yielding
+          setTimeout(processNextItem, 0);
+        }
+      };
+
+      // Start processing this item
+      if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+        (window as any).requestAnimationFrame(step);
+      } else {
+        setTimeout(step, 0);
+      }
+    };
+
+    // Kick off queue processing
+    processNextItem();
   }
 
   private handleBlockUpdate(message: any) {

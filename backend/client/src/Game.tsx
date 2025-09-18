@@ -363,7 +363,8 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
 
       {/* Render optimized world */}
       <OptimizedWorld 
-        blocks={gameState.blocks}
+        chunks={(gameState as any).chunks}
+        chunkVersions={(gameState as any).chunkVersions}
         playerPosition={playerPosition}
       />
 

@@ -112,7 +112,12 @@ export interface WorldSize {
 export interface GameState {
   playerId: string | null;
   players: Map<string, Player>;
+  // Legacy flat map kept for compatibility; prefer using `chunks`
   blocks: Map<string, Block>;
+  // Chunked storage: Map<chunkKey, Map<blockKey, Block>>
+  chunks: Map<string, Map<string, Block>>;
+  // Per-chunk version map to know when a chunk changed
+  chunkVersions: Map<string, number>;
   worldSize: WorldSize | number; // Support both old and new format
   connected: boolean;
   playerPosition: { x: number; y: number; z: number } | null;
@@ -122,3 +127,7 @@ export interface GameState {
 export const getBlockKey = (x: number, y: number, z: number): string => {
   return `${x},${y},${z}`;
 };
+
+export const CHUNK_SIZE = 16;
+export const getChunkKey = (cx: number, cy: number, cz: number): string => `${cx},${cy},${cz}`;
+export const worldToChunk = (coord: number) => Math.floor(coord / CHUNK_SIZE);
