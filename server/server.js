@@ -269,6 +269,10 @@ class GameServer {
         this._nextChunkSequence = 1; // global incrementing sequence for chunk messages
 
         this.options = options || {};
+    // initialization promise: resolved when initializeServer completes (success or failure)
+    this._initialized = false;
+    this._initResolve = null;
+    this._initPromise = new Promise((resolve) => { this._initResolve = resolve; });
     // Provide a log method so subsystems (mods) can route logs through the server logger
     this.log = (msg, level) => log(msg, level);
         // Initialize modding system lazily; in headless mode we may skip mod loading
@@ -316,9 +320,15 @@ class GameServer {
             }
             
             this.setupWebSocketServer();
+            // mark initialized successfully (mods loaded and server ready)
+            this._initialized = true;
+            if (this._initResolve) this._initResolve(true);
         } catch (error) {
             log(`Error initializing server: ${error.message}`, 'ERROR');
             this.setupWebSocketServer(); // Continue without mods
+            // still mark as initialized to avoid blocking connections forever
+            this._initialized = true;
+            if (this._initResolve) this._initResolve(false);
         }
     }
 
@@ -402,20 +412,42 @@ class GameServer {
                 }
 
                 const nearbyBlocks = this.getBlocksInRange(
-                        player.x, player.y, player.z, 
+                        player.x, player.y, player.z,
                         renderDistance * 16 // Convert chunk distance to block distance
                 );
-        
-        const worldState = modWorldState || {
-            blocks: nearbyBlocks,
-            worldSize: worldSize
-        };
+
+        // Prefer freshly-generated nearby blocks (from the active world) when available.
+        // Some persisted worlds expose a mod-provided worldState that contains a full
+        // blocks array (e.g. for in-memory ChunkStore). However, persisted World
+        // instances may report an empty blocks array until chunks are loaded on demand.
+        // In that case prefer the dynamic nearbyBlocks we just generated so the player
+        // doesn't receive an empty initial world on first connection.
+        let worldState = null;
+        if (modWorldState && Array.isArray(modWorldState.blocks) && modWorldState.blocks.length > 0) {
+            worldState = modWorldState;
+            this.log(`Using mod-provided worldState for initial send (blocks=${modWorldState.blocks.length})`);
+        } else if (Array.isArray(nearbyBlocks) && nearbyBlocks.length > 0) {
+            worldState = { blocks: nearbyBlocks, worldSize: worldSize };
+            this.log(`Using dynamically generated nearby blocks for initial send (blocks=${nearbyBlocks.length})`);
+        } else if (modWorldState) {
+            // fallback to modWorldState even if empty (preserve any provided worldSize/spawn)
+            worldState = modWorldState;
+            this.log(`Mod-provided worldState present but empty; sending it (blocks=0)`);
+        } else {
+            worldState = { blocks: nearbyBlocks, worldSize: worldSize };
+        }
 
         // Send initial world state with only nearby blocks
         // Send initial blocks in small batches to avoid freezing client when processing large arrays
         const blocksArray = Array.isArray(worldState.blocks) ? worldState.blocks : [];
         log(`Preparing to send world_init to ${user.username} with ${blocksArray.length} blocks (will be batched)`);
-        this.sendBlocksInBatches(user.id, blocksArray, 'world_init', { playerId: user.id, worldSize: worldState.worldSize });
+        if (!Array.isArray(blocksArray) || blocksArray.length === 0) {
+            // send an explicit empty world_init so the client receives worldSize/spawn even when
+            // no blocks are available yet (prevents client showing default tiny world)
+            this.sendToPlayer(user.id, { type: 'world_init', playerId: user.id, worldSize: worldState.worldSize, blocks: [] });
+        } else {
+            this.sendBlocksInBatches(user.id, blocksArray, 'world_init', { playerId: user.id, worldSize: worldState.worldSize });
+        }
 
         // Initialize per-player chunk send queue and outstanding map to implement sliding-window
         // outstandingChunks: Map<chunkKey, { buffer: ArrayBuffer, lastSent: number, retries: number }>
@@ -538,8 +570,10 @@ class GameServer {
                     
                     if (message && !authenticatedUser && message.type === 'auth_info') {
                         this.handleAuthentication(ws, message, tempConnectionId, authTimeout)
-                            .then((user) => {
+                            .then(async (user) => {
                                 authenticatedUser = user;
+                                // wait up to 5s for server initialization (mods/world) to complete
+                                try { await Promise.race([this._initPromise, new Promise((res) => setTimeout(res, 5000))]); } catch (e) {}
                                 this.initializeAuthenticatedPlayer(ws, user);
                             })
                             .catch((error) => {
