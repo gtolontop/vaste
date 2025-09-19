@@ -44,6 +44,33 @@ export class NetworkManager {
   private blocksProcessingRunning: boolean = false;
   // Per-chunk version counters to trigger chunk rebuilds only when necessary
   private chunkVersions: Map<string, number> = new Map();
+  // Toggleable debug: set localStorage['vaste_debug_chunk_bumps'] = '1' to enable extra logs
+  private debugChunkBumps: boolean = (() => {
+    try {
+      return localStorage.getItem('vaste_debug_chunk_bumps') === '1';
+    } catch (e) {
+      return false;
+    }
+  })();
+
+  // Helper: increment version for a chunk and its 6 face-neighbor chunks.
+  // We avoid bumping diagonal neighbors (3x3x3) because only face-adjacent
+  // chunks can change face visibility for meshes. Bumping fewer chunks
+  // reduces unnecessary rebuilds and prevents large-area flashing.
+  private bumpChunkAndFaceNeighbors(cx: number, cy: number, cz: number) {
+    const key = `${cx},${cy},${cz}`;
+    const ver = this.chunkVersions.get(key) || 0;
+    this.chunkVersions.set(key, ver + 1);
+    if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] bump ${key} -> ${ver + 1}`);
+
+    const faceDirs = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+    for (const d of faceDirs) {
+      const nKey = `${cx + d[0]},${cy + d[1]},${cz + d[2]}`;
+      const nv = this.chunkVersions.get(nKey) || 0;
+      this.chunkVersions.set(nKey, nv + 1);
+      if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] bump ${nKey} -> ${nv + 1}`);
+    }
+  }
 
   connect(serverUrl: string): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -239,16 +266,8 @@ export class NetworkManager {
   this.chunkVersions.set(chunkKey, ver + 1);
   this.gameState.chunkVersions = new Map(this.chunkVersions);
       }
-      // Also bump neighbor chunks so face visibility in adjacent chunks updates
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dz = -1; dz <= 1; dz++) {
-            const nKey = `${cx + dx},${cy + dy},${cz + dz}`;
-            const nv = this.chunkVersions.get(nKey) || 0;
-            this.chunkVersions.set(nKey, nv + 1);
-          }
-        }
-      }
+      // Bump only the chunk and its face-adjacent neighbors (6 neighbors).
+      this.bumpChunkAndFaceNeighbors(cx, cy, cz);
       this.gameState.chunkVersions = new Map(this.chunkVersions);
       this.onStateUpdate({ ...this.gameState });
     } else if (message.type === 'place_block') {
@@ -277,17 +296,9 @@ export class NetworkManager {
       this.gameState.chunks.set(pChunkKey, newChunkMap);
   const pVer = this.chunkVersions.get(pChunkKey) || 0;
   this.chunkVersions.set(pChunkKey, pVer + 1);
-      // bump neighbors
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dz = -1; dz <= 1; dz++) {
-            const nKey = `${pcx + dx},${pcy + dy},${pcz + dz}`;
-            const nv = this.chunkVersions.get(nKey) || 0;
-            this.chunkVersions.set(nKey, nv + 1);
-          }
-        }
-      }
-  this.gameState.chunkVersions = new Map(this.chunkVersions);
+      // Bump only the chunk and its face-adjacent neighbors (6 neighbors).
+      this.bumpChunkAndFaceNeighbors(pcx, pcy, pcz);
+      this.gameState.chunkVersions = new Map(this.chunkVersions);
       this.onStateUpdate({ ...this.gameState });
     }
 
@@ -363,8 +374,11 @@ export class NetworkManager {
       this.gameState.blocks.clear();
       this.onStateUpdate({ ...this.gameState });
     }
-
-  logger.debug(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
+    // Log big incoming chunk updates when debug enabled (helps correlate network messages to local rebuilds)
+    if (this.debugChunkBumps && blocks.length > 256) {
+      console.log(`[CLIENT][DEBUG] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
+    }
+    logger.debug && logger.debug(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
     this.blocksProcessingQueue.push({ blocks, clearExisting: !!opts.clearExisting });
     if (!this.blocksProcessingRunning) {
       this.blocksProcessingRunning = true;
@@ -482,18 +496,12 @@ export class NetworkManager {
   const ver = this.chunkVersions.get(chunkKey) || 0;
   this.chunkVersions.set(chunkKey, ver + 1);
   this.gameState.chunkVersions = new Map(this.chunkVersions);
-        // bump neighbors
-        const [cx, cy, cz] = chunkKey.split(',').map(Number);
-        for (let dx = -1; dx <= 1; dx++) {
-          for (let dy = -1; dy <= 1; dy++) {
-            for (let dz = -1; dz <= 1; dz++) {
-              const nKey = `${cx + dx},${cy + dy},${cz + dz}`;
-              const nv = this.chunkVersions.get(nKey) || 0;
-              this.chunkVersions.set(nKey, nv + 1);
-            }
-          }
+        // bump only face-adjacent neighbors
+        {
+          const [ccx, ccy, ccz] = chunkKey.split(',').map(Number);
+          this.bumpChunkAndFaceNeighbors(ccx, ccy, ccz);
+          this.gameState.chunkVersions = new Map(this.chunkVersions);
         }
-        this.gameState.chunkVersions = new Map(this.chunkVersions);
       }
   logger.info(`[CLIENT] Block broken at (${message.x}, ${message.y}, ${message.z})`);
     } else if (message.action === 'place') {
@@ -514,15 +522,7 @@ export class NetworkManager {
       this.gameState.chunks.set(pChunkKey, newMap);
   const pVer = this.chunkVersions.get(pChunkKey) || 0; this.chunkVersions.set(pChunkKey, pVer + 1);
   // bump neighbors
-      for (let dx = -1; dx <= 1; dx++) {
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dz = -1; dz <= 1; dz++) {
-            const nKey = `${pcx + dx},${pcy + dy},${pcz + dz}`;
-            const nv = this.chunkVersions.get(nKey) || 0;
-            this.chunkVersions.set(nKey, nv + 1);
-          }
-        }
-      }
+      this.bumpChunkAndFaceNeighbors(pcx, pcy, pcz);
       this.gameState.chunkVersions = new Map(this.chunkVersions);
   logger.info(`[CLIENT] Block placed at (${message.x}, ${message.y}, ${message.z})`);
     }

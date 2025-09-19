@@ -1,9 +1,0 @@
-{
-  "type": "flatworld",
-  "spawn": {
-    "x": 0,
-    "y": 47,
-    "z": 0
-  },
-  "height": 256
-}

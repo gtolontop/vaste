@@ -57,6 +57,25 @@ const isFaceVisible = (blocks: Map<string, BlockData>, x: number, y: number, z: 
   return !isBlockSolid(blocks, x + dir[0], y + dir[1], z + dir[2]);
 };
 
+// Cache capability check for Uint32 indices so we don't create a canvas/context per job (avoids leaking WebGL contexts)
+let cachedCanUseUint32: boolean | null = null;
+const getCanUseUint32 = (): boolean => {
+  if (cachedCanUseUint32 !== null) return cachedCanUseUint32;
+  try {
+    const canvas = document.createElement('canvas');
+    const ctx = (canvas.getContext('webgl2') || canvas.getContext('webgl')) as WebGLRenderingContext | WebGL2RenderingContext | null;
+    if (!ctx) { cachedCanUseUint32 = false; return cachedCanUseUint32; }
+    if ((window as any).WebGL2RenderingContext && ctx instanceof (window as any).WebGL2RenderingContext) {
+      cachedCanUseUint32 = true;
+    } else {
+      cachedCanUseUint32 = !!ctx.getExtension('OES_element_index_uint');
+    }
+  } catch (e) {
+    cachedCanUseUint32 = false;
+  }
+  return cachedCanUseUint32;
+};
+
 const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunkY, chunkZ, blocksLookup }) => {
   const meshRef = useRef<THREE.Mesh>(null);
 
@@ -65,9 +84,36 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
   const rebuildKey = `${chunkX},${chunkY},${chunkZ}:${version}`;
 
   const [geometryState, setGeometryState] = useState<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
+  // keep a ref to the latest geometryState so we can dispose on unmount
+  const geometryRef = useRef<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
+  // keep previous geometry around during a swap to avoid flicker; dispose on next frame
+  const prevGeometryRef = useRef<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
+
+  // Helper: create a minimal but valid empty geometry so the <mesh> element stays mounted
+  const createEmptyGeometry = () => {
+    const g = new THREE.BufferGeometry();
+    // create tiny default attributes so Three.js treats geometry as valid
+    const pos = new Float32Array([0,0,0]);
+    const norm = new Float32Array([0,1,0]);
+    const uv = new Float32Array([0,0]);
+    try {
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.BufferAttribute(norm, 3));
+      g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    } catch (e) {
+      // fallback: keep it empty
+    }
+    return g;
+  };
+
+
+  // Optional debug flag to trace mesh job lifecycle. Enable by setting localStorage['vaste_debug_mesh_jobs']='1'
+  const debugMeshJobs = (() => {
+    try { return localStorage.getItem('vaste_debug_mesh_jobs') === '1'; } catch (e) { return false; }
+  })();
 
   useEffect(() => {
-    let cancelled = false;
+  let cancelled = false;
     const chunkUniqueKey = `${chunkX},${chunkY},${chunkZ}:${version}`;
     // Defer heavy geometry work off the render call stack.
     const t = setTimeout(() => {
@@ -79,8 +125,42 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
 
       // If no blocks, set an empty geometry to allow unmounting
       if (chunkBlocks.length === 0) {
-        // Dispose previous geometry if any
-        setGeometryState({ geometry: new THREE.BufferGeometry(), material: null });
+        // Replace geometry with an empty geometry. Defer disposal of previous geometry to avoid flicker.
+        setGeometryState(prev => {
+          try {
+            if (prev && prev.geometry) {
+              prevGeometryRef.current = prev;
+            }
+          } catch (e) {}
+          const empty = { geometry: createEmptyGeometry(), material: null };
+          geometryRef.current = empty;
+          try {
+            if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+              (window as any).requestAnimationFrame(() => {
+                try {
+                  const p = prevGeometryRef.current;
+                  if (p && p.geometry) {
+                    p.geometry.dispose();
+                    if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                  }
+                } catch (e) {}
+                prevGeometryRef.current = null;
+              });
+            } else {
+              setTimeout(() => {
+                try {
+                  const p = prevGeometryRef.current;
+                  if (p && p.geometry) {
+                    p.geometry.dispose();
+                    if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                  }
+                } catch (e) {}
+                prevGeometryRef.current = null;
+              }, 16);
+            }
+          } catch (e) {}
+          return empty;
+        });
         return;
       }
       // Prepare a simple block list for the worker
@@ -91,8 +171,10 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
         const atlasMeta = textureManager.getAtlasMeta();
         const jobId = chunkUniqueKey;
         // post job to pool
+        if (debugMeshJobs) console.log(`[MESH][DEBUG] postJob start job=${jobId} blocks=${blocksForWorker.length}`);
         (meshWorkerPool as any).postJob({ jobId, chunkKey: jobId, cx: chunkX, cy: chunkY, cz: chunkZ, blocks: blocksForWorker, atlasMeta })
           .then((msg: any) => {
+            if (debugMeshJobs) console.log(`[MESH][DEBUG] postJob resolved job=${jobId}`);
             if (cancelled) {
               // ignore results if cancelled
               return;
@@ -122,17 +204,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
 
               // Three.js / WebGL1 does not always support Uint32 indices. Convert when needed.
               // If environment supports Uint32 (WebGL2) we can use the buffer directly.
-              const canUseUint32 = ((): boolean => {
-                try {
-                  const canvas = document.createElement('canvas');
-                  const ctx = (canvas.getContext('webgl2') || canvas.getContext('webgl')) as WebGLRenderingContext | WebGL2RenderingContext | null;
-                  if (!ctx) return false;
-                  if ((window as any).WebGL2RenderingContext && ctx instanceof (window as any).WebGL2RenderingContext) return true;
-                  return !!ctx.getExtension('OES_element_index_uint');
-                } catch (e) {
-                  return false;
-                }
-              })();
+              const canUseUint32 = getCanUseUint32();
 
               try {
                 if (canUseUint32) {
@@ -242,8 +314,42 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
               }
 
               if (!cancelled) {
-                // pass single material to mesh to avoid group/index mismatch
-                setGeometryState({ geometry, material: mat });
+                // Swap in the new geometry; defer disposal of previous geometry to avoid flicker.
+                setGeometryState(prev => {
+                  try {
+                    if (prev && prev.geometry) {
+                      prevGeometryRef.current = prev;
+                    }
+                  } catch (e) {}
+                  const newState = { geometry, material: mat };
+                  geometryRef.current = newState;
+                  try {
+                    if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+                      (window as any).requestAnimationFrame(() => {
+                        try {
+                          const p = prevGeometryRef.current;
+                          if (p && p.geometry) {
+                            p.geometry.dispose();
+                            if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                          }
+                        } catch (e) {}
+                        prevGeometryRef.current = null;
+                      });
+                    } else {
+                      setTimeout(() => {
+                        try {
+                          const p = prevGeometryRef.current;
+                          if (p && p.geometry) {
+                            p.geometry.dispose();
+                            if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                          }
+                        } catch (e) {}
+                        prevGeometryRef.current = null;
+                      }, 16);
+                    }
+                  } catch (e) {}
+                  return newState;
+                });
               } else {
                 try { geometry.dispose(); } catch (e) {}
                 if ((mat as any).dispose) try { (mat as any).dispose(); } catch (e) {}
@@ -253,33 +359,57 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
             }
           })
           .catch((err: any) => {
-            // fallback: set empty geometry
-            setGeometryState({ geometry: new THREE.BufferGeometry(), material: null });
+              // fallback: set empty geometry (keep mesh mounted)
+            if (debugMeshJobs) console.warn('[MESH][DEBUG] postJob failed for job=', jobId, err);
+            // If the job was cancelled (expected when replaced by a newer job), don't replace
+            // the existing geometry with an empty geometry — that creates a one-frame blank.
+            try {
+              const isCancelled = err && (err.message === 'job cancelled' || (err.toString && err.toString().includes('job cancelled')));
+              if (isCancelled) {
+                if (debugMeshJobs) console.debug('[MESH][DEBUG] postJob cancelled for job=', jobId);
+                // If we already have a geometry mounted, keep it to avoid flicker.
+                if (geometryRef.current && geometryRef.current.geometry) {
+                  if (debugMeshJobs) console.debug('[MESH][DEBUG] keeping existing geometry for job=', jobId);
+                  return;
+                }
+                // No existing geometry: set a tiny empty geometry so the <mesh> remains mounted.
+                if (debugMeshJobs) console.debug('[MESH][DEBUG] no existing geometry — setting empty geometry for job=', jobId);
+                setGeometryState({ geometry: createEmptyGeometry(), material: null });
+                return;
+              }
+            } catch (e) {}
+            setGeometryState({ geometry: createEmptyGeometry(), material: null });
           });
       } catch (e) {
-        // fallback: set empty geometry
-        setGeometryState({ geometry: new THREE.BufferGeometry(), material: null });
+  // fallback: set empty geometry (keep mesh mounted)
+  if (debugMeshJobs) console.warn('[MESH][DEBUG] mesh generation exception for chunk', chunkUniqueKey, e);
+  setGeometryState({ geometry: createEmptyGeometry(), material: null });
       }
     }, 0);
 
     return () => {
       cancelled = true;
       clearTimeout(t);
-      // dispose geometry when unmounted to free GPU memory
-      const s = geometryState;
-      if (s && s.geometry) {
-        try {
-          s.geometry.dispose();
-          if (s.material && (s.material as any).dispose) (s.material as any).dispose();
-        } catch (e) {
-          // ignore disposal errors
-        }
-      }
-      // cancel queued mesh job if present
+      // cancel queued mesh job if present (job keyed by chunkUniqueKey)
       try { (meshWorkerPool as any).cancelJob(chunkUniqueKey); } catch (e) {}
     };
     // chunkHash and blocks.size are the main signals to rebuild
   }, [rebuildKey, chunkX, chunkY, chunkZ, chunkMap.size, version]);
+
+  // Dispose retained geometry when this chunk unmounts to free GPU memory.
+  useEffect(() => {
+    return () => {
+      try {
+        const s = geometryRef.current;
+        if (s && s.geometry) {
+          s.geometry.dispose();
+          if (s.material && (s.material as any).dispose) (s.material as any).dispose();
+        }
+      } catch (e) {
+        // ignore disposal errors
+      }
+    };
+  }, []);
 
   if (!geometryState) return null;
   if (!geometryState.geometry.attributes || !geometryState.geometry.attributes.position) return null;
