@@ -153,17 +153,118 @@ export class NetworkManager {
                     worker.onmessage = (evWorker: MessageEvent) => {
                       const d = evWorker.data as any;
                       if (!d) return;
-                      if (d.type === 'decoded' && typeof d.seq === 'number') {
-                        const cb = this.chunkWorkerCallbacks.get(d.seq);
+                      if (d.type === 'decoded') {
+                        // callback key may be requestId (preferred) or seq (fallback for compatibility)
+                        const key = (d.requestId != null) ? d.requestId : d.seq;
+                        const cb = this.chunkWorkerCallbacks.get(key);
                         if (cb) {
                           try { cb(d); } catch (e) { /* swallow */ }
-                          this.chunkWorkerCallbacks.delete(d.seq);
+                          this.chunkWorkerCallbacks.delete(key);
                         }
                       }
                     };
                   }
+                  // Helper to post a single chunk buffer to the worker with a generated requestId
+                  const postChunkToWorker = (chunkAb: ArrayBuffer) => {
+                    const requestId = Math.floor(Math.random() * 0xffffffff);
+                    // register callback keyed by requestId
+                    const callback = (d: any) => {
+                      const { seq, cx, cy, cz, version, indices, types } = d;
+                      const chunkKey = `${cx},${cy},${cz}`;
+                      // Build a Map for this chunk only (local indices -> world coords)
+                      const newChunkMap = new Map<string, any>();
+                      const idxArr = indices as Uint16Array;
+                      const typesArr = types as Uint16Array;
+                      for (let i = 0; i < idxArr.length; i++) {
+                        const localIdx = idxArr[i];
+                        const t = typesArr[i];
+                        const x = localIdx % 16;
+                        const tmp = Math.floor(localIdx / 16);
+                        const z = tmp % 16;
+                        const y = Math.floor(tmp / 16);
+                        const wx = cx * 16 + x;
+                        const wy = cy * 16 + y;
+                        const wz = cz * 16 + z;
+                        const key = getBlockKey(wx, wy, wz);
+                        newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
+                      }
 
-                  // Create callback that will enqueue chunk data into batching structures
+                      // Stash the per-chunk map for later atomic swap (no per-block global map writes)
+                      this.pendingChunkBlocks.set(chunkKey, newChunkMap);
+                      this.pendingChunkKeys.add(chunkKey);
+
+                      // send ack now (no UI effect)
+                      try {
+                        const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
+                        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                          try {
+                            const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+                            const set = raw ? JSON.parse(raw) : [];
+                            if (!set.includes(seq)) {
+                              set.push(seq);
+                              localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                            }
+                          } catch (e) {}
+                          this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
+                        }
+                      } catch (e) {}
+
+                      // schedule a UI update on the next animation frame if not already scheduled
+                      if (this.scheduledUpdateHandle == null) {
+                        const scheduleFn = (typeof window !== 'undefined' && (window as any).requestAnimationFrame) ?
+                          ((fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn)) :
+                          ((fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16));
+                        this.scheduledUpdateHandle = scheduleFn(() => {
+                          try {
+                            // Apply all pending chunk swaps
+                            for (const ck of Array.from(this.pendingChunkKeys)) {
+                              const cm = this.pendingChunkBlocks.get(ck);
+                              if (cm) this.gameState.chunks.set(ck, cm);
+                            }
+                            // bump chunkVersions for all modified chunks
+                            for (const ck of Array.from(this.pendingChunkKeys)) {
+                              const ver = this.chunkVersions.get(ck) || 0;
+                              this.chunkVersions.set(ck, ver + 1);
+                              const [cxStr, cyStr, czStr] = ck.split(',');
+                              const cx = Number(cxStr), cy = Number(cyStr), cz = Number(czStr);
+                              this.bumpChunkAndFaceNeighbors(cx, cy, cz);
+                            }
+                            this.gameState.chunkVersions = new Map(this.chunkVersions);
+
+                            // clear pending structures
+                            this.pendingChunkKeys.clear();
+                            this.pendingChunkBlocks.clear();
+
+                            // Fire a single state update for the UI
+                            this.onStateUpdate({ ...this.gameState });
+                          } finally {
+                            this.scheduledUpdateHandle = null;
+                          }
+                        }) as any;
+                      }
+                    };
+                    this.chunkWorkerCallbacks.set(requestId, callback);
+                    // post the chunk buffer to worker (transfer)
+                    try { (worker as any).postMessage({ type: 'decode', buffer: chunkAb, requestId }, [chunkAb]); } catch (e) { /* swallow */ }
+                  };
+
+                  // If the buffer is a CHUNK_BATCH envelope, split and post individual chunk buffers
+                  const dvPeek = new DataView(ab);
+                  const msgTypePeek = dvPeek.getUint8(0);
+                  if (msgTypePeek === 2) {
+                    // envelope format: uint8 msgType(2), uint32 count, then for each: uint32 len, <len bytes>
+                    let off = 1;
+                    const count = dvPeek.getUint32(off, true); off += 4;
+                    for (let i = 0; i < count; i++) {
+                      const len = dvPeek.getUint32(off, true); off += 4;
+                      const chunkAb = ab.slice(off, off + len);
+                      off += len;
+                      postChunkToWorker(chunkAb);
+                    }
+                    return;
+                  }
+
+                  // Create callback that will enqueue chunk data into batching structures (for single CHUNK_FULL)
                   const callback = (d: any) => {
                     const { seq, cx, cy, cz, version, indices, types } = d;
                     const chunkKey = `${cx},${cy},${cz}`;
@@ -246,7 +347,7 @@ export class NetworkManager {
                   const requestId = Math.floor(Math.random() * 0xffffffff);
                   this.chunkWorkerCallbacks.set(requestId, callback);
                   // Post buffer transferable to worker with requestId
-                  worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]);
+                  try { worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]); } catch (e) { /* swallow */ }
                 } catch (e) {
                   // swallow worker errors to avoid noisy logs in client
                 }
