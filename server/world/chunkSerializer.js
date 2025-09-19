@@ -1,4 +1,5 @@
 const { CHUNK_SIZE } = require('./ChunkStore');
+const zlib = require('zlib');
 
 // New full-chunk binary serializer with simple RLE compression.
 // Message format (little-endian):
@@ -146,6 +147,18 @@ function serializeChunk(chunk) {
   } else if (rawBytes.length <= payload.length && rawBytes.length <= rle.length) {
     compressionMode = 0;
     payload = new Uint8Array(rawBytes);
+  }
+
+  // Try zlib deflate on the selected payload if it meaningfully reduces size.
+  try {
+    const compressed = zlib.deflateSync(Buffer.from(payload));
+    // If compressed is smaller, use it and mark high-bit on compressionMode to indicate zlib
+    if (compressed.length < payload.length - 8) { // require some gain to justify decompression
+      payload = new Uint8Array(compressed);
+      compressionMode = (compressionMode | 0x80) >>> 0; // set high bit
+    }
+  } catch (e) {
+    // ignore compression failures and use payload as-is
   }
 
   const headerSize = 26; // bytes until payload
