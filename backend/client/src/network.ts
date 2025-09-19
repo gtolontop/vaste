@@ -103,25 +103,6 @@ export class NetworkManager {
         };
 
         this.ws.onmessage = async (event) => {
-          // eslint-disable-next-line no-console
-          console.log('[CLIENT] WebSocket message received (type=', typeof event.data, ')');
-          // If it's a string/text message, log the raw (truncated) payload and a compact summary for debugging
-          if (typeof event.data === 'string') {
-            try {
-              // eslint-disable-next-line no-console
-              console.log('[CLIENT] Raw text message preview:', event.data.substring ? event.data.substring(0, 1000) : String(event.data));
-            } catch (e) {
-              // ignore
-            }
-            try {
-              const parsed = JSON.parse(event.data);
-              // eslint-disable-next-line no-console
-              console.log('[CLIENT] WebSocket text message type=', parsed.type, parsed.blocks ? `blocks=${(parsed.blocks||[]).length}` : '');
-            } catch (e) {
-              // eslint-disable-next-line no-console
-              console.log('[CLIENT] WebSocket text message (non-json or parse failed)');
-            }
-          }
           try {
             // If the server sent a binary chunk message (ArrayBuffer), decode it
             if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
@@ -397,10 +378,6 @@ export class NetworkManager {
   }
 
   private handleChunksUpdate(message: any) {
-  // visible debug
-  // eslint-disable-next-line no-console
-  console.log('[CLIENT] Received chunks_update; blocks=', (message.blocks || []).length);
-  logger.info(`[CLIENT] Received chunks update with ${message.blocks.length} blocks`);
     // Enqueue chunk updates for incremental processing
     this.enqueueBlocksForProcessing(message.blocks || [], { clearExisting: false });
   }
@@ -413,11 +390,6 @@ export class NetworkManager {
       this.gameState.blocks.clear();
       this.onStateUpdate({ ...this.gameState });
     }
-    // Log big incoming chunk updates when debug enabled (helps correlate network messages to local rebuilds)
-    if (this.debugChunkBumps && blocks.length > 256) {
-      console.log(`[CLIENT][DEBUG] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
-    }
-    logger.debug && logger.debug(`[CLIENT] Enqueueing ${blocks.length} blocks for incremental processing (clearExisting=${!!opts.clearExisting})`);
     this.blocksProcessingQueue.push({ blocks, clearExisting: !!opts.clearExisting });
     if (!this.blocksProcessingRunning) {
       this.blocksProcessingRunning = true;

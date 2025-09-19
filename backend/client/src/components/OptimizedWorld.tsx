@@ -171,10 +171,8 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
         const atlasMeta = textureManager.getAtlasMeta();
         const jobId = chunkUniqueKey;
         // post job to pool
-        if (debugMeshJobs) console.log(`[MESH][DEBUG] postJob start job=${jobId} blocks=${blocksForWorker.length}`);
         (meshWorkerPool as any).postJob({ jobId, chunkKey: jobId, cx: chunkX, cy: chunkY, cz: chunkZ, blocks: blocksForWorker, atlasMeta })
           .then((msg: any) => {
-            if (debugMeshJobs) console.log(`[MESH][DEBUG] postJob resolved job=${jobId}`);
             if (cancelled) {
               // ignore results if cancelled
               return;
@@ -195,7 +193,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                 if (i >= 1000) break; // avoid long loops for extremely large meshes
               }
               const uvSample = uvArr.length >= 4 ? [uvArr[0], uvArr[1], uvArr[2], uvArr[3]] : Array.from(uvArr).slice(0, 4);
-              logger.debug && logger.debug(`[MESH] job=${jobId} pos=${posCount} verts uv=${uvArr.length/2} idx=${idxCount} maxIdxApprox=${maxIdx} uvSample=${uvSample}`);
 
               const geometry = new THREE.BufferGeometry();
               geometry.setAttribute('position', new THREE.BufferAttribute(posArr, 3));
@@ -252,7 +249,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                   }
                 }
               } catch (setIndexErr) {
-                console.error(`[MESH] failed to set index for job=${jobId}`, setIndexErr);
                 // fallback: make non-indexed geometry
                 try {
                   const expandedPos: number[] = [];
@@ -279,7 +275,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                   geometry.setAttribute('normal', new THREE.BufferAttribute(eNorm, 3));
                   geometry.setAttribute('uv', new THREE.BufferAttribute(eUV, 2));
                 } catch (expErr) {
-                  console.error('[MESH] fallback expansion failed for job=', jobId, expErr);
                 }
               }
 
@@ -307,10 +302,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                 const atlasExists = !!textureManager.getAtlasTexture();
                 const atlasCount = textureManager.getAtlasMeta() && textureManager.getAtlasMeta()!.mappings ? Object.keys(textureManager.getAtlasMeta()!.mappings).length : 0;
                 const atlasInfo = atlasExists && (textureManager.getAtlasTexture() as any).image ? `image=${(textureManager.getAtlasTexture() as any).image.width}x${(textureManager.getAtlasTexture() as any).image.height}` : 'no-image';
-                logger.debug && logger.debug(`[MESH] atlas available=${atlasExists} entries=${atlasCount} ${atlasInfo}`);
-                logger.debug && logger.debug(`[MESH] created mesh job=${jobId} verts=${posCount} triangles=${Math.floor(idxCount/3)} maxIdx=${maxIdx} materialHasMap=${!!(mat as any).map}`);
               } catch (e) {
-                logger.debug && logger.debug('[MESH] created mesh (diagnostics failed)', e);
               }
 
               if (!cancelled) {
@@ -360,20 +352,17 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
           })
           .catch((err: any) => {
               // fallback: set empty geometry (keep mesh mounted)
-            if (debugMeshJobs) console.warn('[MESH][DEBUG] postJob failed for job=', jobId, err);
-            // If the job was cancelled (expected when replaced by a newer job), don't replace
+
+              // If the job was cancelled (expected when replaced by a newer job), don't replace
             // the existing geometry with an empty geometry — that creates a one-frame blank.
             try {
               const isCancelled = err && (err.message === 'job cancelled' || (err.toString && err.toString().includes('job cancelled')));
               if (isCancelled) {
-                if (debugMeshJobs) console.debug('[MESH][DEBUG] postJob cancelled for job=', jobId);
                 // If we already have a geometry mounted, keep it to avoid flicker.
                 if (geometryRef.current && geometryRef.current.geometry) {
-                  if (debugMeshJobs) console.debug('[MESH][DEBUG] keeping existing geometry for job=', jobId);
                   return;
                 }
                 // No existing geometry: set a tiny empty geometry so the <mesh> remains mounted.
-                if (debugMeshJobs) console.debug('[MESH][DEBUG] no existing geometry — setting empty geometry for job=', jobId);
                 setGeometryState({ geometry: createEmptyGeometry(), material: null });
                 return;
               }
@@ -382,7 +371,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
           });
       } catch (e) {
   // fallback: set empty geometry (keep mesh mounted)
-  if (debugMeshJobs) console.warn('[MESH][DEBUG] mesh generation exception for chunk', chunkUniqueKey, e);
   setGeometryState({ geometry: createEmptyGeometry(), material: null });
       }
     }, 0);
