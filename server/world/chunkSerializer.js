@@ -68,12 +68,82 @@ function serializeChunk(chunk) {
     blocks = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
   }
 
-  // Attempt RLE compression and fall back to raw if RLE is not smaller
-  const rawBytes = Buffer.from(blocks.buffer); // Node Buffer views underlying ArrayBuffer
+  // Try palette + bitpacking as first choice (compact for low-entropy chunks).
+  // Build a palette of unique block ids appearing in the chunk (include 0 if present).
+  const paletteMap = new Map();
+  const paletteArr = [];
+  for (let i = 0; i < blocks.length; i++) {
+    const v = blocks[i];
+    if (!paletteMap.has(v)) {
+      const idx = paletteArr.length;
+      paletteMap.set(v, idx);
+      paletteArr.push(v);
+    }
+  }
+
+  // Compute bits per entry needed for palette indices (min 1)
+  let paletteLen = paletteArr.length;
+  if (paletteLen === 0) paletteLen = 1, paletteArr.push(0);
+  let bitsPerEntry = 1;
+  while ((1 << bitsPerEntry) < paletteLen && bitsPerEntry < 16) bitsPerEntry++;
+
+  // Pack palette indices into a compact bitbuffer
+  const VOXELS = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE;
+  const totalBits = VOXELS * bitsPerEntry;
+  const packedBytesLen = Math.ceil(totalBits / 8);
+  const packed = new Uint8Array(packedBytesLen);
+  let bitPos = 0;
+  for (let i = 0; i < VOXELS; i++) {
+    const v = blocks[i] || 0;
+    const pidx = paletteMap.get(v);
+    let remaining = bitsPerEntry;
+    let value = pidx;
+    while (remaining > 0) {
+      const byteIndex = (bitPos >>> 3);
+      const bitOffset = bitPos & 7;
+      const space = 8 - bitOffset;
+      const toWrite = Math.min(space, remaining);
+      // mask out the lower `toWrite` bits
+      const mask = (1 << toWrite) - 1;
+      packed[byteIndex] |= ((value & mask) << bitOffset) & 0xff;
+      value = value >>> toWrite;
+      remaining -= toWrite;
+      bitPos += toWrite;
+    }
+  }
+
+  // Build uncompressed payload for packed format:
+  // [uint8 paletteLen][paletteLen*uint16 LE][uint8 bitsPerEntry][uint32 packedByteLen][packed bytes]
+  const paletteBytes = new Uint8Array(paletteLen * 2);
+  for (let i = 0; i < paletteLen; i++) {
+    const v = paletteArr[i] & 0xffff;
+    paletteBytes[i * 2] = v & 0xff;
+    paletteBytes[i * 2 + 1] = (v >>> 8) & 0xff;
+  }
+
+  const headerUncompressedLen = 1 + (paletteLen * 2) + 1 + 4; // paletteLen + palette + bitsPerEntry + packedByteLen
+  const uncompressedPayload = new Uint8Array(headerUncompressedLen + packedBytesLen);
+  let upOff = 0;
+  uncompressedPayload[upOff++] = paletteLen & 0xff;
+  uncompressedPayload.set(paletteBytes, upOff); upOff += paletteBytes.length;
+  uncompressedPayload[upOff++] = bitsPerEntry & 0xff;
+  // packedByteLen (uint32 LE)
+  uncompressedPayload[upOff++] = packedBytesLen & 0xff;
+  uncompressedPayload[upOff++] = (packedBytesLen >>> 8) & 0xff;
+  uncompressedPayload[upOff++] = (packedBytesLen >>> 16) & 0xff;
+  uncompressedPayload[upOff++] = (packedBytesLen >>> 24) & 0xff;
+  uncompressedPayload.set(packed, upOff);
+
+  // Compare sizes: packed uncompressed vs existing RLE vs raw. Pick best small-format to send.
+  const rawBytes = Buffer.from(blocks.buffer);
   const rle = rleEncodeUint16(blocks);
-  let compressionMode = 1;
-  let payload = rle;
-  if (rle.length >= rawBytes.length) {
+  let compressionMode = 2; // 2 = palette+packed (uncompressed)
+  let payload = uncompressedPayload;
+  // if RLE is better than palette-packed choose RLE
+  if (rle.length < payload.length && rle.length < rawBytes.length) {
+    compressionMode = 1;
+    payload = rle;
+  } else if (rawBytes.length <= payload.length && rawBytes.length <= rle.length) {
     compressionMode = 0;
     payload = new Uint8Array(rawBytes);
   }

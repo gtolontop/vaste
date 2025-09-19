@@ -58,6 +58,55 @@ self.onmessage = (ev: MessageEvent) => {
       }
     }
 
+    // New: palette + packed format (compressionMode === 2)
+    if (compressionMode === 2) {
+      // payload layout: [uint8 paletteLen][paletteLen*uint16 LE][uint8 bitsPerEntry][uint32 packedByteLen][packed bytes]
+      try {
+        const pv = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+        let pOff = 0;
+        const paletteLen = pv.getUint8(pOff); pOff += 1;
+        const palette = new Uint16Array(paletteLen);
+        for (let i = 0; i < paletteLen; i++) {
+          palette[i] = pv.getUint16(pOff, true); pOff += 2;
+        }
+        const bitsPerEntry = pv.getUint8(pOff); pOff += 1;
+        const packedByteLen = pv.getUint32(pOff, true); pOff += 4;
+        const packedBytes = new Uint8Array(payload.buffer, payload.byteOffset + pOff, packedByteLen);
+
+        // Unpack bitstream into palette indices
+        const totalBits = VOXELS * bitsPerEntry;
+        let bitPos = 0;
+        const indices = new Uint32Array(VOXELS);
+        for (let i = 0; i < VOXELS; i++) {
+          let bitsLeft = bitsPerEntry;
+          let value = 0;
+          let shift = 0;
+          while (bitsLeft > 0) {
+            const byteIndex = (bitPos >>> 3);
+            const bitOffset = bitPos & 7;
+            const available = Math.min(8 - bitOffset, bitsLeft);
+            const byte = packedBytes[byteIndex];
+            const part = (byte >>> bitOffset) & ((1 << available) - 1);
+            value |= (part << shift);
+            shift += available;
+            bitsLeft -= available;
+            bitPos += available;
+          }
+          indices[i] = value;
+        }
+
+        // Map palette indices to block types and fill blocksU16
+        for (let i = 0; i < VOXELS; i++) {
+          const pidx = indices[i];
+          const v = (pidx < palette.length) ? palette[pidx] : 0;
+          blocksU16[i] = v;
+        }
+      } catch (err) {
+        // fallback to empty chunk on any decode error
+        blocksU16 = new Uint16Array(VOXELS);
+      }
+    }
+
     // Build sparse representation as typed arrays (indices within chunk and types). This is much cheaper
     // to transfer back to the main thread than large arrays of JS objects.
     const idxs: number[] = [];
