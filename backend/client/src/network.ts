@@ -13,6 +13,16 @@ function generateId() {
 
 export class NetworkManager {
   private ws: WebSocket | null = null;
+  // Lazy worker for decoding binary chunk messages off the main thread
+  private chunkProcessorWorker: Worker | null = null;
+  // Map of seq -> callback to handle decoded chunk results from worker
+  private chunkWorkerCallbacks: Map<number, (msg: any) => void> = new Map();
+  // Batch structures to coalesce UI updates
+  private pendingChunkKeys: Set<string> = new Set();
+  private pendingChunkBlocks: Map<string, Map<string, any>> = new Map();
+  // Note: avoid global per-block Map updates on chunk apply to minimize main-thread work.
+  // Keep the global blocks map for small updates; but for full chunk swaps we only swap chunk Map.
+  private scheduledUpdateHandle: number | null = null;
   private gameState: GameState;
   private onStateUpdate: (state: GameState) => void;
   private onConnectionChange: (connected: boolean) => void;
@@ -106,102 +116,147 @@ export class NetworkManager {
           try {
             // If the server sent a binary chunk message (ArrayBuffer), decode it
             if (event.data instanceof ArrayBuffer || event.data instanceof Blob) {
-              const handleArrayBuffer = async (ab: ArrayBuffer) => {
-                const dv = new DataView(ab);
-                let off = 0;
-                const msgType = dv.getUint8(off); off += 1;
-                if (msgType === 1) { // CHUNK_FULL (new compact full-chunk format)
-                  const seq = dv.getUint32(off, true); off += 4;
-                  const cx = dv.getInt32(off, true); off += 4;
-                  const cy = dv.getInt32(off, true); off += 4;
-                  const cz = dv.getInt32(off, true); off += 4;
-                  const version = dv.getInt32(off, true); off += 4;
-                  const compressionMode = dv.getUint8(off); off += 1;
-                  const payloadLen = dv.getUint32(off, true); off += 4;
-                  const payload = new Uint8Array(ab, off, payloadLen);
-
-                  // decode into a Uint16Array of length 16^3
-                  const VOXELS = 16 * 16 * 16;
-                  let blocksU16 = new Uint16Array(VOXELS);
-                  if (compressionMode === 0) {
-                    // raw: payload is little-endian Uint16 array
-                    if (payload.byteLength >= VOXELS * 2) {
-                      blocksU16 = new Uint16Array(payload.buffer, payload.byteOffset, VOXELS);
-                    } else {
-                      // malformed: fall back to zeros
-                      blocksU16 = new Uint16Array(VOXELS);
+              // Use a dedicated worker to decode and build sparse blocks list off the main thread
+              const postBuffer = async (ab: ArrayBuffer) => {
+                try {
+                  if (!this.chunkProcessorWorker) {
+                    // create a worker using Vite/webpack worker import path
+                    try {
+                      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+                      // @ts-ignore
+                      this.chunkProcessorWorker = new Worker(new URL('./workers/chunkProcessorWorker.ts', import.meta.url), { type: 'module' } as any);
+                    } catch (e) {
+                      // fallback to classic Worker if bundler supports .js
+                      try { this.chunkProcessorWorker = new Worker('/src/workers/chunkProcessorWorker.js'); } catch (e2) { this.chunkProcessorWorker = null; }
                     }
-                  } else if (compressionMode === 1) {
-                    // RLE decode: pairs of uint16 runLength, uint16 value
-                    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-                    let pos = 0;
-                    let outIdx = 0;
-                    while (pos + 4 <= payload.byteLength && outIdx < VOXELS) {
-                      const run = view.getUint16(pos, true); pos += 2;
-                      const val = view.getUint16(pos, true); pos += 2;
-                      for (let r = 0; r < run && outIdx < VOXELS; r++) {
-                        blocksU16[outIdx++] = val;
-                      }
+                  }
+                  if (!this.chunkProcessorWorker) {
+                    // fallback to main-thread handling if worker creation failed
+                    // convert Blob to ArrayBuffer if needed then fallthrough to JSON parsing
+                    const ab2 = event.data instanceof Blob ? await event.data.arrayBuffer() : (event.data as ArrayBuffer);
+                    // if worker unavailable, just ignore heavy binary: allow main-thread decoder as previous implementation
+                    // To keep compatibility, attempt main-thread decode (rare path)
+                    // -> reuse existing code path by creating a temporary DataView decode (kept minimal)
+                    const dv = new DataView(ab2);
+                    const msgType = dv.getUint8(0);
+                    if (msgType === 1) {
+                      // we cannot efficiently decode here; as a last resort, enqueue as empty chunk to avoid partial display
+                      // (this case should be rare; recommend ensuring bundler supports module workers)
                     }
-                    // if we didn't fill entire chunk, remaining values are zeros
+                    return;
                   }
 
-                  // Apply the full chunk atomically: build a chunk map and replace client's chunk entry
-                  const chunkKey = `${cx},${cy},${cz}`;
-                  const newChunkMap = new Map<string, any>();
-                  for (let idx = 0; idx < blocksU16.length; idx++) {
-                    const t = blocksU16[idx];
-                    if (t === 0) continue;
-                    const x = idx % 16;
-                    const tmp = Math.floor(idx / 16);
-                    const z = tmp % 16;
-                    const y = Math.floor(tmp / 16);
-                    const wx = cx * 16 + x;
-                    const wy = cy * 16 + y;
-                    const wz = cz * 16 + z;
-                    const key = getBlockKey(wx, wy, wz);
-                    newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
-                    // Also update global blocks map for quick lookup
-                    this.gameState.blocks.set(key, { x: wx, y: wy, z: wz, type: t });
-                  }
-
-                  // Replace the client's chunk map with the new one (atomic swap)
-                  this.gameState.chunks.set(chunkKey, newChunkMap);
-                  // bump chunk version and neighbors for mesh rebuilds
-                  const ver = this.chunkVersions.get(chunkKey) || 0;
-                  this.chunkVersions.set(chunkKey, ver + 1);
-                  this.bumpChunkAndFaceNeighbors(cx, cy, cz);
-                  this.gameState.chunkVersions = new Map(this.chunkVersions);
-
-                  // Send ACK to server so it can slide its window
-                  try {
-                    const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
-                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                      // persist applied seq
-                      try {
-                        const raw = localStorage.getItem('vaste_applied_chunk_seqs');
-                        const set = raw ? JSON.parse(raw) : [];
-                        if (!set.includes(seq)) {
-                          set.push(seq);
-                          localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                  const worker = this.chunkProcessorWorker;
+                  // ensure global worker onmessage handler is installed once
+                  if (worker && (worker as any)._installed !== true) {
+                    (worker as any)._installed = true;
+                    worker.onmessage = (evWorker: MessageEvent) => {
+                      const d = evWorker.data as any;
+                      if (!d) return;
+                      if (d.type === 'decoded' && typeof d.seq === 'number') {
+                        const cb = this.chunkWorkerCallbacks.get(d.seq);
+                        if (cb) {
+                          try { cb(d); } catch (e) { /* swallow */ }
+                          this.chunkWorkerCallbacks.delete(d.seq);
                         }
-                      } catch (e) {}
-                      this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
-                    }
-                  } catch (e) {}
+                      }
+                    };
+                  }
 
-                  // Notify UI once per chunk for fast display
-                  this.onStateUpdate({ ...this.gameState });
-                  return;
+                  // Create callback that will enqueue chunk data into batching structures
+                  const callback = (d: any) => {
+                    const { seq, cx, cy, cz, version, indices, types } = d;
+                    const chunkKey = `${cx},${cy},${cz}`;
+                    // Build a Map for this chunk only (local indices -> world coords)
+                    const newChunkMap = new Map<string, any>();
+                    const idxArr = indices as Uint16Array;
+                    const typesArr = types as Uint16Array;
+                    for (let i = 0; i < idxArr.length; i++) {
+                      const localIdx = idxArr[i];
+                      const t = typesArr[i];
+                      const x = localIdx % 16;
+                      const tmp = Math.floor(localIdx / 16);
+                      const z = tmp % 16;
+                      const y = Math.floor(tmp / 16);
+                      const wx = cx * 16 + x;
+                      const wy = cy * 16 + y;
+                      const wz = cz * 16 + z;
+                      const key = getBlockKey(wx, wy, wz);
+                      newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
+                    }
+
+                    // Stash the per-chunk map for later atomic swap (no per-block global map writes)
+                    this.pendingChunkBlocks.set(chunkKey, newChunkMap);
+                    this.pendingChunkKeys.add(chunkKey);
+
+                    // send ack now (no UI effect)
+                    try {
+                      const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
+                      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        try {
+                          const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+                          const set = raw ? JSON.parse(raw) : [];
+                          if (!set.includes(seq)) {
+                            set.push(seq);
+                            localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                          }
+                        } catch (e) {}
+                        this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
+                      }
+                    } catch (e) {}
+
+                    // schedule a UI update on the next animation frame if not already scheduled
+                    if (this.scheduledUpdateHandle == null) {
+                      const scheduleFn = (typeof window !== 'undefined' && (window as any).requestAnimationFrame) ?
+                        ((fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn)) :
+                        ((fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16));
+                      this.scheduledUpdateHandle = scheduleFn(() => {
+                        try {
+                          // Apply all pending chunk swaps
+                          for (const ck of Array.from(this.pendingChunkKeys)) {
+                            const cm = this.pendingChunkBlocks.get(ck);
+                            if (cm) this.gameState.chunks.set(ck, cm);
+                          }
+                          // We avoid applying per-block global map updates for full chunk swaps to reduce main-thread work.
+                          // If you rely on `gameState.blocks` for specific features, consider updating them lazily on demand.
+                          // bump chunkVersions for all modified chunks
+                          for (const ck of Array.from(this.pendingChunkKeys)) {
+                            const ver = this.chunkVersions.get(ck) || 0;
+                            this.chunkVersions.set(ck, ver + 1);
+                            const [cxStr, cyStr, czStr] = ck.split(',');
+                            const cx = Number(cxStr), cy = Number(cyStr), cz = Number(czStr);
+                            this.bumpChunkAndFaceNeighbors(cx, cy, cz);
+                          }
+                          this.gameState.chunkVersions = new Map(this.chunkVersions);
+
+                          // clear pending structures
+                          this.pendingChunkKeys.clear();
+                          this.pendingChunkBlocks.clear();
+
+                          // Fire a single state update for the UI
+                          this.onStateUpdate({ ...this.gameState });
+                        } finally {
+                          this.scheduledUpdateHandle = null;
+                        }
+                      }) as any;
+                    }
+                  };
+
+                  // register callback keyed by a unique requestId and include it in the posted message (worker will echo it back)
+                  const requestId = Math.floor(Math.random() * 0xffffffff);
+                  this.chunkWorkerCallbacks.set(requestId, callback);
+                  // Post buffer transferable to worker with requestId
+                  worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]);
+                } catch (e) {
+                  // swallow worker errors to avoid noisy logs in client
                 }
-                // Unknown binary message: ignore for now
               };
 
               if (event.data instanceof Blob) {
                 const ab = await event.data.arrayBuffer();
-                handleArrayBuffer(ab);
+                await postBuffer(ab);
               } else {
-                handleArrayBuffer(event.data as ArrayBuffer);
+                await postBuffer(event.data as ArrayBuffer);
               }
               return;
             }

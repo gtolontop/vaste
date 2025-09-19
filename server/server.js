@@ -7,6 +7,7 @@ const path = require('path');
 const { VasteModSystem } = require('./VasteModSystem');
 const { ChunkStore, CHUNK_SIZE } = require('./world/ChunkStore');
 const clientStateManager = require('./clientStateManager');
+const { SerializeWorkerPool } = require('./world/serializeWorkerPool');
 
 const PORT = process.env.PORT || 25565;
 const CHUNK_ACK_TIMEOUT_MS = 5000; // default resend if not acked within 5s
@@ -268,6 +269,8 @@ class GameServer {
             log('Created default in-memory ChunkStore because options.defaultWorld=chunkstore');
         }
         this._nextChunkSequence = 1; // global incrementing sequence for chunk messages
+    // Optional serialize worker pool for parallel chunk serialization
+    this._serializePool = new SerializeWorkerPool(Math.max(1, (options.serializePoolSize || Math.max(1, require('os').cpus().length - 2))));
 
         this.options = options || {};
     // initialization promise: resolved when initializeServer completes (success or failure)
@@ -941,18 +944,41 @@ class GameServer {
         if (!player || !player.ws || player.ws.readyState !== WebSocket.OPEN) return;
 
         // send each chunk as a binary CHUNK_FULL message (serialized & possibly compressed)
-        const { serializeChunk } = require('./world/chunkSerializer');
-        for (const chunk of chunksToSend) {
-            try {
-                const seq = this._nextChunkSequence++;
-                const chunkCopy = Object.assign({}, chunk);
-                chunkCopy.__seq = seq;
-                const buffer = serializeChunk(chunkCopy);
-                const chunkKey = `${chunk.cx},${chunk.cy},${chunk.cz}:${chunk.version || 1}:${seq}`;
-                player.sendQueue.push({ chunkKey, buffer, seq });
-            } catch (e) {
-                log(`Failed to serialize chunk ${chunk.cx},${chunk.cy},${chunk.cz} for player ${playerId}: ${e.message}`, 'WARN');
+        const toSerialize = chunksToSend.map(c => {
+            const seq = this._nextChunkSequence++;
+            const chunkCopy = Object.assign({}, c);
+            chunkCopy.__seq = seq;
+            return { cx: c.cx, cy: c.cy, cz: c.cz, chunk: chunkCopy, seq };
+        });
+
+        // serialize in parallel using the worker pool (best-effort). Fall back to main-thread serialize on rejection.
+        const serializePromises = toSerialize.map(item => {
+            return this._serializePool.serializeChunk(item.chunk).then(msg => {
+                // msg: { id, cx, cy, cz, buffer }
+                return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer: msg.buffer };
+            }).catch(err => {
+                // fallback to synchronous serialize if worker failed
+                try {
+                    const { serializeChunk } = require('./world/chunkSerializer');
+                    const buffer = serializeChunk(item.chunk);
+                    return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer };
+                } catch (e) {
+                    log(`Failed to serialize chunk ${item.cx},${item.cy},${item.cz} for player ${playerId}: ${e.message}`, 'WARN');
+                    return null;
+                }
+            });
+        });
+
+        try {
+            const serialized = await Promise.all(serializePromises);
+            for (const s of serialized) {
+                if (!s) continue;
+                const chunkKey = `${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`;
+                player.sendQueue.push({ chunkKey, buffer: s.buffer, seq: s.seq });
             }
+        } catch (e) {
+            // If something unexpected happens, log and continue; we keep sendQueue possibly empty
+            log(`Error during parallel chunk serialization: ${e && e.message ? e.message : String(e)}`, 'WARN');
         }
 
         // persist sendQueue state

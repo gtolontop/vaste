@@ -16,7 +16,16 @@ type MeshResult = {
   indices: ArrayBuffer;
 };
 
-const DEFAULT_POOL_SIZE = (typeof navigator !== 'undefined' && (navigator as any).hardwareConcurrency) ? (navigator as any).hardwareConcurrency : 2;
+const DEFAULT_POOL_SIZE = (() => {
+  try {
+    const override = (typeof localStorage !== 'undefined') ? localStorage.getItem('vaste_mesh_pool_size') : null;
+    if (override) {
+      const n = parseInt(override, 10);
+      if (!isNaN(n) && n > 0) return n;
+    }
+  } catch (e) {}
+  return (typeof navigator !== 'undefined' && (navigator as any).hardwareConcurrency) ? (navigator as any).hardwareConcurrency : 2;
+})();
 
 class MeshWorkerPool {
   private workers: Worker[] = [];
