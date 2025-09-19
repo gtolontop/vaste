@@ -121,10 +121,11 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
 
       const textureManager = TextureManager.getInstance();
 
-      const chunkBlocks: BlockData[] = (Array.from(chunkMap.values()) as unknown as BlockData[]).filter(b => b.type !== 0);
+  const allBlocks = Array.from(chunkMap.values()) as unknown as BlockData[];
+  const chunkBlocks = allBlocks.filter(b => b.type !== 0);
 
-      // If no blocks, set an empty geometry to allow unmounting
-      if (chunkBlocks.length === 0) {
+  // If no blocks, set an empty geometry to allow unmounting
+  if (chunkBlocks.length === 0) {
         // Replace geometry with an empty geometry. Defer disposal of previous geometry to avoid flicker.
         setGeometryState(prev => {
           try {
@@ -163,15 +164,28 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
         });
         return;
       }
-      // Prepare a simple block list for the worker
-      const blocksForWorker = chunkBlocks.map(b => ({ x: b.x, y: b.y, z: b.z, type: b.type }));
+      // Prepare typed-array sparse representation for the worker to avoid large JS object allocations
+      // indices: local index within chunk (0..4095) where idx = ((y*16 + z)*16) + x
+      // types: corresponding block types
+      const VOXELS = 16 * 16 * 16;
+      const indicesArr = new Uint16Array(chunkBlocks.length);
+      const typesArr = new Uint16Array(chunkBlocks.length);
+      for (let i = 0; i < chunkBlocks.length; i++) {
+        const b = chunkBlocks[i];
+        const lx = b.x - (chunkX * CHUNK_SIZE);
+        const ly = b.y - (chunkY * CHUNK_SIZE);
+        const lz = b.z - (chunkZ * CHUNK_SIZE);
+        const localIdx = ((ly * CHUNK_SIZE + lz) * CHUNK_SIZE) + lx;
+        indicesArr[i] = localIdx;
+        typesArr[i] = b.type;
+      }
 
-      // send to mesh worker via pool
+      // send to mesh worker via pool (transfer typed arrays)
       try {
         const atlasMeta = textureManager.getAtlasMeta();
         const jobId = chunkUniqueKey;
         // post job to pool
-        (meshWorkerPool as any).postJob({ jobId, chunkKey: jobId, cx: chunkX, cy: chunkY, cz: chunkZ, blocks: blocksForWorker, atlasMeta })
+        (meshWorkerPool as any).postJob({ jobId, chunkKey: jobId, cx: chunkX, cy: chunkY, cz: chunkZ, indices: indicesArr, types: typesArr, atlasMeta })
           .then((msg: any) => {
             if (cancelled) {
               // ignore results if cancelled

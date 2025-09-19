@@ -3,7 +3,11 @@ type MeshJob = {
   jobId: string;
   chunkKey: string;
   cx: number; cy: number; cz: number;
-  blocks: Array<{ x:number; y:number; z:number; type:number }>;
+  // new: use typed arrays for sparse block data to avoid JS allocations
+  // indices: local chunk indices (0..4095) as Uint16Array
+  // types: corresponding block types as Uint16Array
+  indices?: Uint16Array;
+  types?: Uint16Array;
   atlasMeta: any | null;
 };
 
@@ -77,9 +81,13 @@ class MeshWorkerPool {
         const worker = this.workers[this.nextIdx];
         this.nextIdx = (this.nextIdx + 1) % this.workers.length;
         this.pending.set(job.jobId, { resolve, reject });
-        const payload: any = { type: 'meshChunk', chunkKey: job.jobId, cx: job.cx, cy: job.cy, cz: job.cz, blocks: job.blocks, atlasMeta: job.atlasMeta };
+        // Build payload with typed-array buffers transferred when available
+        const payload: any = { type: 'meshChunk', chunkKey: job.jobId, cx: job.cx, cy: job.cy, cz: job.cz, atlasMeta: job.atlasMeta };
+        const transfers: ArrayBuffer[] = [];
+  if (job.indices) { payload.indices = job.indices; transfers.push(job.indices.buffer as ArrayBuffer); }
+  if (job.types) { payload.types = job.types; transfers.push(job.types.buffer as ArrayBuffer); }
         try {
-          worker.postMessage(payload, []);
+          worker.postMessage(payload, transfers);
         } catch (e) {
           this.pending.delete(job.jobId);
           reject(e);
@@ -126,9 +134,12 @@ class MeshWorkerPool {
       const worker = this.workers[this.nextIdx];
       this.nextIdx = (this.nextIdx + 1) % this.workers.length;
       this.pending.set(job.jobId, resolver);
-      const payload: any = { type: 'meshChunk', chunkKey: job.jobId, cx: job.cx, cy: job.cy, cz: job.cz, blocks: job.blocks, atlasMeta: job.atlasMeta };
+      const payload: any = { type: 'meshChunk', chunkKey: job.jobId, cx: job.cx, cy: job.cy, cz: job.cz, atlasMeta: job.atlasMeta };
+      const transfers: ArrayBuffer[] = [];
+  if (job.indices) { payload.indices = job.indices; transfers.push(job.indices.buffer as ArrayBuffer); }
+  if (job.types) { payload.types = job.types; transfers.push(job.types.buffer as ArrayBuffer); }
       try {
-        worker.postMessage(payload, []);
+        worker.postMessage(payload, transfers);
       } catch (e) {
         this.pending.delete(job.jobId);
         try { resolver.reject(e); } catch (e2) {}

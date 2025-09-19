@@ -17,7 +17,10 @@ interface MeshRequest {
   type: 'meshChunk';
   chunkKey: string;
   cx: number; cy: number; cz: number;
-  blocks: Block[];
+  blocks?: Block[];
+  // fast-path sparse typed arrays: local indices (0..4095) and block types
+  indices?: Uint16Array;
+  types?: Uint16Array;
   atlasMeta: AtlasMeta | null;
 }
 
@@ -42,11 +45,24 @@ onmessage = function(ev: MessageEvent) {
   const baseY = msg.cy * CHUNK_SIZE;
   const baseZ = msg.cz * CHUNK_SIZE;
 
+  // Build a sparse volume from provided typed arrays if present (preferred),
+  // otherwise fall back to legacy blocks array.
   const volume = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
-  for (const b of msg.blocks) {
-    const lx = b.x - baseX; const ly = b.y - baseY; const lz = b.z - baseZ;
-    if (lx < 0 || lx >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
-    volume[idx(lx,ly,lz)] = b.type;
+  if ((msg as any).indices && (msg as any).types) {
+    const inds = msg.indices as Uint16Array;
+    const types = msg.types as Uint16Array;
+    const n = Math.min(inds.length, types.length);
+    for (let i = 0; i < n; i++) {
+      const localIdx = inds[i];
+      if (localIdx < 0 || localIdx >= CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) continue;
+      volume[localIdx] = types[i];
+    }
+  } else if ((msg as any).blocks && Array.isArray((msg as any).blocks)) {
+    for (const b of (msg as any).blocks) {
+      const lx = b.x - baseX; const ly = b.y - baseY; const lz = b.z - baseZ;
+      if (lx < 0 || lx >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
+      volume[idx(lx,ly,lz)] = b.type;
+    }
   }
 
   const positions: number[] = [];
