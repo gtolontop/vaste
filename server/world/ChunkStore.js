@@ -73,6 +73,7 @@ class Chunk {
 class ChunkStore {
   constructor(options = {}) {
     this.chunks = new Map(); // key -> Chunk
+    this.pending = new Map(); // key -> Promise resolving when worker finishes
     this.minBounds = { x: 0, y: 0, z: 0 };
     this.maxBounds = { x: CHUNK_SIZE, y: CHUNK_SIZE, z: CHUNK_SIZE };
     this.lru = new Map(); // key -> timestamp (used for LRU eviction)
@@ -143,9 +144,14 @@ class ChunkStore {
       this._markAccess(key);
       return Promise.resolve(existing);
     }
+    // If a generation for this key is already in-flight, return that promise
+    const pending = this.pending.get(key);
+    if (pending) return pending;
     if (this.workerPool) {
-      return new Promise((resolve, reject) => {
+      const promise = new Promise((resolve, reject) => {
         this.workerPool.generateChunk(cx, cy, cz, (err, msg) => {
+          // Clear pending when done
+          this.pending.delete(key);
           if (err) return reject(err);
           if (msg && msg.error) return reject(new Error(msg.error));
           try {
@@ -153,10 +159,14 @@ class ChunkStore {
             const u16 = new Uint16Array(buf);
             const chunk = new Chunk(cx, cy, cz);
             chunk.blocks = u16;
-            // compute nonEmptyCount
-            let cnt = 0;
-            for (let i = 0; i < u16.length; i++) if (u16[i] !== 0) cnt++;
-            chunk.nonEmptyCount = cnt;
+            // Use nonEmptyCount from worker if present to avoid scanning
+            if (typeof msg.nonEmptyCount === 'number') {
+              chunk.nonEmptyCount = msg.nonEmptyCount;
+            } else {
+              let cnt = 0;
+              for (let i = 0; i < u16.length; i++) if (u16[i] !== 0) cnt++;
+              chunk.nonEmptyCount = cnt;
+            }
             this.chunks.set(key, chunk);
             this._markAccess(key);
             this._evictIfNeeded();
@@ -166,6 +176,8 @@ class ChunkStore {
           }
         });
       });
+      this.pending.set(key, promise);
+      return promise;
     }
     // fallback to synchronous ensureChunk
     return Promise.resolve(this.ensureChunk(cx, cy, cz));

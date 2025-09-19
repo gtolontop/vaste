@@ -6,14 +6,16 @@ class ChunkWorkerPool {
     this.size = size;
     this.workers = [];
     this.free = [];
+    this.queue = []; // queued tasks when no free worker
     this.taskId = 1;
     this.callbacks = new Map();
+    this._shuttingDown = false;
 
     for (let i = 0; i < this.size; i++) {
       const worker = new Worker(path.join(__dirname, 'generateChunkWorker.js'));
       worker.on('message', (msg) => this._handleMessage(msg, worker));
       worker.on('error', (err) => console.error('[ChunkWorkerPool] worker error', err));
-      worker.on('exit', (code) => { if (code !== 0) console.warn('[ChunkWorkerPool] worker exited code', code); });
+      worker.on('exit', (code) => { if (!this._shuttingDown && code !== 0) console.warn('[ChunkWorkerPool] worker exited code', code); });
       this.workers.push(worker);
       this.free.push(worker);
     }
@@ -30,16 +32,24 @@ class ChunkWorkerPool {
     }
     // mark worker free
     if (!this.free.includes(worker)) this.free.push(worker);
+    // If there are queued tasks, immediately assign one
+    const task = this.queue.shift();
+    if (task) {
+      const { id, cx, cy, cz } = task;
+      // set callback is already done by generateChunk
+      // remove worker from free and post message
+      const w = this.free.pop();
+      if (w) w.postMessage({ id, cx, cy, cz });
+    }
   }
 
   generateChunk(cx, cy, cz, callback) {
     const id = (this.taskId++).toString();
     const worker = this.free.pop();
     if (!worker) {
-      // no free worker: schedule on first worker (best-effort)
-      const fallback = this.workers[Math.floor(Math.random() * this.workers.length)];
+      // No free worker: enqueue the task and attach callback. It will be processed when a worker frees.
       this.callbacks.set(id, callback);
-      fallback.postMessage({ id, cx, cy, cz });
+      this.queue.push({ id, cx, cy, cz });
       return;
     }
     this.callbacks.set(id, callback);
@@ -48,6 +58,7 @@ class ChunkWorkerPool {
   }
 
   destroy() {
+    this._shuttingDown = true;
     for (const w of this.workers) w.terminate();
     this.workers = [];
     this.free = [];
