@@ -111,6 +111,9 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
   const [geometryState, setGeometryState] = useState<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
   // keep a ref to the latest geometryState so we can dispose on unmount
   const geometryRef = useRef<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
+  // shared empty material used for empty geometries to avoid passing `null` which can
+  // cause downstream reconciler/three.js code to attempt to access `.visible` on undefined.
+  const emptyMaterialRef = useRef<THREE.Material>(new THREE.MeshBasicMaterial({ visible: false }));
   // keep previous geometry around during a swap to avoid flicker; dispose on next frame
   const prevGeometryRef = useRef<{ geometry: THREE.BufferGeometry; material: THREE.Material | null } | null>(null);
 
@@ -158,7 +161,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
               prevGeometryRef.current = prev;
             }
           } catch (e) {}
-          const empty = { geometry: createEmptyGeometry(), material: null };
+          const empty = { geometry: createEmptyGeometry(), material: emptyMaterialRef.current };
           geometryRef.current = empty;
           try {
             if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
@@ -167,7 +170,8 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                   const p = prevGeometryRef.current;
                   if (p && p.geometry) {
                     p.geometry.dispose();
-                    if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                    // avoid disposing the shared empty material
+                    if (p.material && p.material !== emptyMaterialRef.current && (p.material as any).dispose) (p.material as any).dispose();
                   }
                 } catch (e) {}
                 prevGeometryRef.current = null;
@@ -429,15 +433,15 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                   return;
                 }
                 // No existing geometry: set a tiny empty geometry so the <mesh> remains mounted.
-                setGeometryState({ geometry: createEmptyGeometry(), material: null });
+                setGeometryState({ geometry: createEmptyGeometry(), material: emptyMaterialRef.current });
                 return;
               }
             } catch (e) {}
-            setGeometryState({ geometry: createEmptyGeometry(), material: null });
+      setGeometryState({ geometry: createEmptyGeometry(), material: emptyMaterialRef.current });
           });
       } catch (e) {
   // fallback: set empty geometry (keep mesh mounted)
-  setGeometryState({ geometry: createEmptyGeometry(), material: null });
+  setGeometryState({ geometry: createEmptyGeometry(), material: emptyMaterialRef.current });
       }
     }, 0);
 
@@ -457,7 +461,7 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
         const s = geometryRef.current;
         if (s && s.geometry) {
           s.geometry.dispose();
-          if (s.material && (s.material as any).dispose) (s.material as any).dispose();
+          if (s.material && s.material !== emptyMaterialRef.current && (s.material as any).dispose) (s.material as any).dispose();
         }
       } catch (e) {
         // ignore disposal errors
