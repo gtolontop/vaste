@@ -11,6 +11,7 @@ self.onmessage = (ev: MessageEvent) => {
   try {
     const ab: ArrayBuffer = data.buffer;
     const dv = new DataView(ab);
+      const tStart = Date.now();
     let off = 0;
     const msgType = dv.getUint8(off); off += 1;
     if (msgType !== 1) {
@@ -61,8 +62,9 @@ self.onmessage = (ev: MessageEvent) => {
 
   const indices = new Uint16Array(idxs);
   const typesArr = new Uint16Array(types);
+    const decodeMs = Date.now() - tStart;
     // Use any cast to avoid DOM Window overload typing issues in TypeScript
-    (self as any).postMessage({ type: 'decoded', requestId, seq, cx, cy, cz, version, indices, types: typesArr }, [indices.buffer, typesArr.buffer]);
+    (self as any).postMessage({ type: 'decoded', requestId, seq, cx, cy, cz, version, indices, types: typesArr, decodeMs }, [indices.buffer, typesArr.buffer]);
   } catch (e) {
     (self as any).postMessage({ type: 'error', requestId: data && data.requestId ? data.requestId : null, error: String(e) });
   }

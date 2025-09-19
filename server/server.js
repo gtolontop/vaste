@@ -273,7 +273,14 @@ class GameServer {
     // Optional serialize worker pool for parallel chunk serialization
     this._serializePool = new SerializeWorkerPool(Math.max(1, (options.serializePoolSize || Math.max(1, require('os').cpus().length - 2))));
 
-        this.options = options || {};
+                this.options = options || {};
+                // Allow enabling debug timing logs via environment variable for easier diagnostics
+                try {
+                    if (process && process.env && process.env.VASTE_DEBUG_TIMINGS === '1') {
+                        this.options.debugTimings = true;
+                        log('Debug timings enabled via VASTE_DEBUG_TIMINGS env var', 'INFO');
+                    }
+                } catch (e) {}
     // initialization promise: resolved when initializeServer completes (success or failure)
     this._initialized = false;
     this._initResolve = null;
@@ -286,6 +293,8 @@ class GameServer {
         // In headless/test mode we avoid creating the WebSocket server to prevent port binding
         if (!this.options.headless) {
             this.wss = new WebSocket.Server({ port: PORT });
+            this.wss.on('listening', () => log(`WebSocket server listening on port ${PORT}`));
+            this.wss.on('error', (err) => log(`WebSocket server error: ${err.message}`, 'ERROR'));
             log(`Vaste server started on port ${PORT}`);
             this.initializeServer();
         } else {
@@ -526,7 +535,13 @@ class GameServer {
             let authenticatedUser = null;
             let authTimeout = null;
 
-            log(`New connection established, awaiting authentication... (temp ID: ${tempConnectionId.substring(0, 8)})`);
+                        // Log remote address/port when available for diagnostics
+                        try {
+                            const remoteInfo = ws && ws._socket ? `${ws._socket.remoteAddress}:${ws._socket.remotePort}` : 'unknown';
+                            log(`New connection established from ${remoteInfo}, awaiting authentication... (temp ID: ${tempConnectionId.substring(0, 8)})`);
+                        } catch (e) {
+                            log(`New connection established, awaiting authentication... (temp ID: ${tempConnectionId.substring(0, 8)})`);
+                        }
 
             // Set authentication timeout (30 seconds)
             authTimeout = setTimeout(() => {
@@ -957,15 +972,23 @@ class GameServer {
 
         // serialize in parallel using the worker pool (best-effort). Fall back to main-thread serialize on rejection.
         const serializePromises = toSerialize.map(item => {
+            const serializeRequestedAt = Date.now();
             return this._serializePool.serializeChunk(item.chunk).then(msg => {
-                // msg: { id, cx, cy, cz, buffer }
-                return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer: msg.buffer };
+                // msg: { id, cx, cy, cz, buffer, serializeMs }
+                const finishedAt = Date.now();
+                const serializeMsReported = typeof msg.serializeMs === 'number' ? msg.serializeMs : (finishedAt - serializeRequestedAt);
+                // Always log serialize timing so operators can see chunk serialization cost
+                try { log(`serializeChunk ${item.cx},${item.cy},${item.cz} seq=${item.seq} reportedSerializeMs=${serializeMsReported}`); } catch (e) {}
+                return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer: msg.buffer, serializeMs: serializeMsReported, serializedAt: finishedAt };
             }).catch(err => {
                 // fallback to synchronous serialize if worker failed
                 try {
                     const { serializeChunk } = require('./world/chunkSerializer');
+                    const t0 = Date.now();
                     const buffer = serializeChunk(item.chunk);
-                    return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer };
+                    const dur = Date.now() - t0;
+                    if (this.options && this.options.debugTimings) log(`serializeChunk fallback ${item.cx},${item.cy},${item.cz} seq=${item.seq} durMs=${dur}`);
+                    return { seq: item.seq, cx: item.cx, cy: item.cy, cz: item.cz, buffer, serializeMs: dur, serializedAt: Date.now() };
                 } catch (e) {
                     log(`Failed to serialize chunk ${item.cx},${item.cy},${item.cz} for player ${playerId}: ${e.message}`, 'WARN');
                     return null;
@@ -1003,13 +1026,34 @@ class GameServer {
                         chunkKeys.push(chunkKey);
                     }
                     // Enqueue the envelope (chunkKey is array to indicate batch)
-                    player.sendQueue.push({ chunkKey: chunkKeys, buffer: env });
+                    player.sendQueue.push({ chunkKey: chunkKeys, buffer: env, enqueuedAt: Date.now() });
                 }
             } else {
-                for (const s of serialized) {
-                    if (!s) continue;
-                    const chunkKey = `${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`;
-                    player.sendQueue.push({ chunkKey, buffer: s.buffer, seq: s.seq });
+                // For non-initial sends we also group chunks into batch envelopes to reduce per-message overhead.
+                const BATCH_SIZE = 8;
+                for (let i = 0; i < serialized.length; i += BATCH_SIZE) {
+                    const slice = serialized.slice(i, i + BATCH_SIZE).filter(s => s);
+                    if (slice.length === 0) continue;
+                    // build envelope: [uint8 msgType=2][uint32 count][uint32 len][chunk...]
+                    let totalLen = 1 + 4;
+                    for (const s of slice) totalLen += 4 + s.buffer.byteLength;
+                    const env = new ArrayBuffer(totalLen);
+                    const dv = new DataView(env);
+                    let off = 0;
+                    dv.setUint8(off, 2); off += 1; // CHUNK_BATCH
+                    dv.setUint32(off, slice.length, true); off += 4;
+                    for (const s of slice) {
+                        dv.setUint32(off, s.buffer.byteLength, true); off += 4;
+                        const target = new Uint8Array(env, off, s.buffer.byteLength);
+                        target.set(new Uint8Array(s.buffer));
+                        off += s.buffer.byteLength;
+                    }
+                    const chunkKeys = [];
+                    for (const s of slice) {
+                        const chunkKey = `${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`;
+                        chunkKeys.push(chunkKey);
+                    }
+                    player.sendQueue.push({ chunkKey: chunkKeys, buffer: env, enqueuedAt: Date.now() });
                 }
             }
             // Debug: log how many items were enqueued for sending (helpful in headless tests)
@@ -1053,7 +1097,20 @@ class GameServer {
             const item = player.sendQueue.shift();
             try {
                 // send binary buffer
+                const sendStartedAt = Date.now();
                 player.ws.send(item.buffer);
+                // compute enqueue->send latency if available
+                try {
+                    const enqueuedAt = item.enqueuedAt || (item.buffer && item.serializedAt) || null;
+                    if (enqueuedAt) {
+                        try {
+                            const enqToSendMs = sendStartedAt - enqueuedAt;
+                            log(`send chunk item chunkKey=${Array.isArray(item.chunkKey) ? item.chunkKey.slice(0,3).join('|') : item.chunkKey} enqToSendMs=${enqToSendMs} serializeMs=${item.serializeMs || 'n/a'}`);
+                        } catch (e) {}
+                    }
+                    // record telemetry
+                    player._telemetry.lastEnqToSendMs = enqueuedAt ? (sendStartedAt - enqueuedAt) : null;
+                } catch (e) {}
                 // extract seq
                 const ackTimeoutBase = (this.options && this.options.chunkAckTimeoutMs) || CHUNK_ACK_TIMEOUT_MS;
                 if (Array.isArray(item.chunkKey)) {

@@ -17,6 +17,8 @@ export class NetworkManager {
   private chunkProcessorWorker: Worker | null = null;
   // Map of seq -> callback to handle decoded chunk results from worker
   private chunkWorkerCallbacks: Map<number, (msg: any) => void> = new Map();
+  // Map of requestId -> timestamp when buffer was posted to decode worker (for timing)
+  private _chunkBufferTimes: Map<number, number> = new Map();
   // Batch structures to coalesce UI updates
   private pendingChunkKeys: Set<string> = new Set();
   private pendingChunkBlocks: Map<string, Map<string, any>> = new Map();
@@ -156,6 +158,20 @@ export class NetworkManager {
                       if (d.type === 'decoded') {
                         // callback key may be requestId (preferred) or seq (fallback for compatibility)
                         const key = (d.requestId != null) ? d.requestId : d.seq;
+                        // If we recorded when this buffer was posted to the worker, compute transfer+decode timings
+                        try {
+                          const postedAt = this._chunkBufferTimes.get(key as number);
+                          if (postedAt != null) {
+                            const now = Date.now();
+                            const transferPlusDecodeMs = now - postedAt;
+                            const decodeMs = (d.decodeMs != null) ? d.decodeMs : 0;
+                              try {
+                                // eslint-disable-next-line no-console
+                                console.log(`[CLIENT][TIMINGS] chunk ${d.cx},${d.cy},${d.cz} seq=${d.seq} requestId=${d.requestId} transfer+decode=${transferPlusDecodeMs}ms decodeMs=${decodeMs}ms`);
+                              } catch (e) { /* ignore console errors */ }
+                            this._chunkBufferTimes.delete(key as number);
+                          }
+                        } catch (e) { /* swallow timing errors */ }
                         const cb = this.chunkWorkerCallbacks.get(key);
                         if (cb) {
                           try { cb(d); } catch (e) { /* swallow */ }
@@ -244,8 +260,11 @@ export class NetworkManager {
                       }
                     };
                     this.chunkWorkerCallbacks.set(requestId, callback);
-                    // post the chunk buffer to worker (transfer)
-                    try { (worker as any).postMessage({ type: 'decode', buffer: chunkAb, requestId }, [chunkAb]); } catch (e) { /* swallow */ }
+                    // record posted timestamp and post the chunk buffer to worker (transfer)
+                    try {
+                      this._chunkBufferTimes.set(requestId, Date.now());
+                      (worker as any).postMessage({ type: 'decode', buffer: chunkAb, requestId }, [chunkAb]);
+                    } catch (e) { /* swallow */ }
                   };
 
                   // If the buffer is a CHUNK_BATCH envelope, split and post individual chunk buffers
@@ -346,8 +365,11 @@ export class NetworkManager {
                   // register callback keyed by a unique requestId and include it in the posted message (worker will echo it back)
                   const requestId = Math.floor(Math.random() * 0xffffffff);
                   this.chunkWorkerCallbacks.set(requestId, callback);
-                  // Post buffer transferable to worker with requestId
-                  try { worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]); } catch (e) { /* swallow */ }
+                  // Record posted timestamp and post buffer transferable to worker with requestId
+                  try {
+                    this._chunkBufferTimes.set(requestId, Date.now());
+                    worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]);
+                  } catch (e) { /* swallow */ }
                 } catch (e) {
                   // swallow worker errors to avoid noisy logs in client
                 }

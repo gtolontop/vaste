@@ -9,6 +9,31 @@ import { getDefaultMeshWorkerPool } from '../workers/meshWorkerPool';
 // worker pool instance (lazy)
 const meshWorkerPool = getDefaultMeshWorkerPool();
 
+// Global upload throttling queue to limit main-thread GPU uploads per frame.
+const UPLOAD_QUEUE: Array<() => void> = [];
+let uploadQueueScheduled = false;
+const MAX_UPLOADS_PER_FRAME = 3; // tuneable: number of geometry uploads allowed per rAF
+
+function scheduleUploadQueue() {
+  if (uploadQueueScheduled) return;
+  uploadQueueScheduled = true;
+  const runner = () => {
+    uploadQueueScheduled = false;
+    let count = 0;
+    while (count < MAX_UPLOADS_PER_FRAME && UPLOAD_QUEUE.length > 0) {
+      const fn = UPLOAD_QUEUE.shift();
+      try { if (fn) fn(); } catch (e) { /* swallow */ }
+      count++;
+    }
+    if (UPLOAD_QUEUE.length > 0) scheduleUploadQueue();
+  };
+  if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+    (window as any).requestAnimationFrame(runner);
+  } else {
+    setTimeout(runner, 16);
+  }
+}
+
 interface ChunkProps {
   chunkMap: Map<string, BlockData>;
   version: number;
@@ -191,6 +216,8 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
               // ignore results if cancelled
               return;
             }
+            // Capture when the mesh result arrived on the main thread so we can measure upload/display time
+            const meshResultArrivedAt = Date.now();
             try {
               const posArr = new Float32Array(msg.positions);
               const normArr = new Float32Array(msg.normals);
@@ -320,42 +347,67 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
               }
 
               if (!cancelled) {
-                // Swap in the new geometry; defer disposal of previous geometry to avoid flicker.
-                setGeometryState(prev => {
-                  try {
-                    if (prev && prev.geometry) {
-                      prevGeometryRef.current = prev;
-                    }
-                  } catch (e) {}
-                  const newState = { geometry, material: mat };
-                  geometryRef.current = newState;
-                  try {
-                    if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
-                      (window as any).requestAnimationFrame(() => {
-                        try {
-                          const p = prevGeometryRef.current;
-                          if (p && p.geometry) {
-                            p.geometry.dispose();
-                            if (p.material && (p.material as any).dispose) (p.material as any).dispose();
-                          }
-                        } catch (e) {}
-                        prevGeometryRef.current = null;
-                      });
-                    } else {
-                      setTimeout(() => {
-                        try {
-                          const p = prevGeometryRef.current;
-                          if (p && p.geometry) {
-                            p.geometry.dispose();
-                            if (p.material && (p.material as any).dispose) (p.material as any).dispose();
-                          }
-                        } catch (e) {}
-                        prevGeometryRef.current = null;
-                      }, 16);
-                    }
-                  } catch (e) {}
-                  return newState;
-                });
+                // Defer the actual React state swap / GPU upload into an upload queue so we can
+                // throttle how many heavy uploads happen on the main thread per frame.
+                const applyFn = () => {
+                  const uploadStart = Date.now();
+                  setGeometryState(prev => {
+                    try {
+                      if (prev && prev.geometry) {
+                        prevGeometryRef.current = prev;
+                      }
+                    } catch (e) {}
+                    const newState = { geometry, material: mat };
+                    geometryRef.current = newState;
+                    try {
+                      if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+                        (window as any).requestAnimationFrame(() => {
+                          try {
+                            const p = prevGeometryRef.current;
+                            if (p && p.geometry) {
+                              p.geometry.dispose();
+                              if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                            }
+                          } catch (e) {}
+                          prevGeometryRef.current = null;
+                          // Log timings: mesh worker time and main-thread upload/display time (always)
+                          try {
+                            const meshMs = (msg && msg.meshMs) ? msg.meshMs : 0;
+                            const uploadMs = Date.now() - uploadStart;
+                            const posCount = posArr.length / 3;
+                            const idxCount = idxArrRaw.length;
+                            // eslint-disable-next-line no-console
+                            console.log(`[CLIENT][TIMINGS] chunk ${jobId} meshMs=${meshMs} mainUploadMs=${uploadMs}ms pos=${posCount} idx=${idxCount}`);
+                          } catch (e) {}
+                        });
+                      } else {
+                        setTimeout(() => {
+                          try {
+                            const p = prevGeometryRef.current;
+                            if (p && p.geometry) {
+                              p.geometry.dispose();
+                              if (p.material && (p.material as any).dispose) (p.material as any).dispose();
+                            }
+                          } catch (e) {}
+                          prevGeometryRef.current = null;
+                          // Log timings for non-rAF fallback (always)
+                          try {
+                            const meshMs = (msg && msg.meshMs) ? msg.meshMs : 0;
+                            const uploadMs = Date.now() - uploadStart;
+                            const posCount = posArr.length / 3;
+                            const idxCount = idxArrRaw.length;
+                            // eslint-disable-next-line no-console
+                            console.log(`[CLIENT][TIMINGS] chunk ${jobId} meshMs=${meshMs} mainUploadMs=${uploadMs}ms pos=${posCount} idx=${idxCount}`);
+                          } catch (e) {}
+                        }, 16);
+                      }
+                    } catch (e) {}
+                    return newState;
+                  });
+                };
+
+                UPLOAD_QUEUE.push(applyFn);
+                scheduleUploadQueue();
               } else {
                 try { geometry.dispose(); } catch (e) {}
                 if ((mat as any).dispose) try { (mat as any).dispose(); } catch (e) {}

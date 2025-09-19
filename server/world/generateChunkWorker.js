@@ -8,7 +8,9 @@ parentPort.on('message', (msg) => {
   // res: { u16: Uint16Array, nonEmptyCount }
     const u16 = res.u16;
     const nonEmptyCount = res.nonEmptyCount || 0;
-    // transfer the underlying buffer to main thread along with nonEmptyCount
+    // timing: include generation duration if provided by generator (or compute here)
+    // Note: generator is synchronous so measure duration here for worker-level timing
+    // (higher-level timing is measured on server when calling worker)
     parentPort.postMessage({ id, cx, cy, cz, blocksBuffer: u16.buffer, nonEmptyCount }, [u16.buffer]);
   } catch (e) {
     parentPort.postMessage({ id, cx, cy, cz, error: String(e) });

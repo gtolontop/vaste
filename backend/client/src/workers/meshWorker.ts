@@ -70,6 +70,7 @@ onmessage = function(ev: MessageEvent) {
   const uvs: number[] = [];
   const indices: number[] = [];
   let vi = 0;
+  const meshStart = Date.now();
 
   // Directions: +X, -X, +Y, -Y, +Z, -Z
   const dirs = [ [1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1] ];
@@ -211,18 +212,20 @@ onmessage = function(ev: MessageEvent) {
     }
   }
 
+  const meshMs = Date.now() - meshStart;
   const posBuf = new Float32Array(positions).buffer;
   const normBuf = new Float32Array(normals).buffer;
   const uvBuf = new Float32Array(uvs).buffer;
   const idxBuf = new Uint32Array(indices).buffer;
 
-  const resp: MeshResponse = {
+  const resp: MeshResponse & { meshMs?: number } = {
     type: 'meshResult',
     chunkKey: msg.chunkKey,
     positions: posBuf,
     normals: normBuf,
     uvs: uvBuf,
-    indices: idxBuf
+    indices: idxBuf,
+    meshMs
   };
 
   // Transfer buffers back to main thread
