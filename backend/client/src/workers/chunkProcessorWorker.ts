@@ -6,25 +6,33 @@
 
 self.onmessage = (ev: MessageEvent) => {
   const data = ev.data;
-  if (!data || data.type !== 'decode' || !data.buffer) return;
+  if (!data || data.type !== "decode" || !data.buffer) return;
   const requestId = data.requestId || null;
   try {
     const ab: ArrayBuffer = data.buffer;
     const dv = new DataView(ab);
-      const tStart = Date.now();
+    const tStart = Date.now();
     let off = 0;
-    const msgType = dv.getUint8(off); off += 1;
+    const msgType = dv.getUint8(off);
+    off += 1;
     if (msgType !== 1) {
-      self.postMessage({ type: 'error', error: 'unsupported msgType' });
+      self.postMessage({ type: "error", error: "unsupported msgType" });
       return;
     }
-    const seq = dv.getUint32(off, true); off += 4;
-    const cx = dv.getInt32(off, true); off += 4;
-    const cy = dv.getInt32(off, true); off += 4;
-    const cz = dv.getInt32(off, true); off += 4;
-    const version = dv.getInt32(off, true); off += 4;
-    const compressionMode = dv.getUint8(off); off += 1;
-    const payloadLen = dv.getUint32(off, true); off += 4;
+    const seq = dv.getUint32(off, true);
+    off += 4;
+    const cx = dv.getInt32(off, true);
+    off += 4;
+    const cy = dv.getInt32(off, true);
+    off += 4;
+    const cz = dv.getInt32(off, true);
+    off += 4;
+    const version = dv.getInt32(off, true);
+    off += 4;
+    const compressionMode = dv.getUint8(off);
+    off += 1;
+    const payloadLen = dv.getUint32(off, true);
+    off += 4;
     const payload = new Uint8Array(ab, off, payloadLen);
 
     const VOXELS = 16 * 16 * 16;
@@ -40,8 +48,10 @@ self.onmessage = (ev: MessageEvent) => {
       let pos = 0;
       let outIdx = 0;
       while (pos + 4 <= payload.byteLength && outIdx < VOXELS) {
-        const run = view.getUint16(pos, true); pos += 2;
-        const val = view.getUint16(pos, true); pos += 2;
+        const run = view.getUint16(pos, true);
+        pos += 2;
+        const val = view.getUint16(pos, true);
+        pos += 2;
         for (let r = 0; r < run && outIdx < VOXELS; r++) {
           blocksU16[outIdx++] = val;
         }
@@ -60,12 +70,12 @@ self.onmessage = (ev: MessageEvent) => {
       }
     }
 
-  const indices = new Uint16Array(idxs);
-  const typesArr = new Uint16Array(types);
+    const indices = new Uint16Array(idxs);
+    const typesArr = new Uint16Array(types);
     const decodeMs = Date.now() - tStart;
     // Use any cast to avoid DOM Window overload typing issues in TypeScript
-    (self as any).postMessage({ type: 'decoded', requestId, seq, cx, cy, cz, version, indices, types: typesArr, decodeMs }, [indices.buffer, typesArr.buffer]);
+    (self as any).postMessage({ type: "decoded", requestId, seq, cx, cy, cz, version, indices, types: typesArr, decodeMs }, [indices.buffer, typesArr.buffer]);
   } catch (e) {
-    (self as any).postMessage({ type: 'error', requestId: data && data.requestId ? data.requestId : null, error: String(e) });
+    (self as any).postMessage({ type: "error", requestId: data && data.requestId ? data.requestId : null, error: String(e) });
   }
 };

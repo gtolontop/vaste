@@ -2,7 +2,7 @@
 export const logger = {
   debug: (...args: any[]) => {
     try {
-      if (typeof window !== 'undefined' && (window as any).__VASTE_DEBUG__) {
+      if (typeof window !== "undefined" && (window as any).__VASTE_DEBUG__) {
         // Use console.debug when available
         if ((console as any).debug) (console as any).debug(...args);
         else console.log(...args);
@@ -13,7 +13,7 @@ export const logger = {
   },
   info: (...args: any[]) => {
     try {
-      if (typeof window !== 'undefined' && (window as any).__VASTE_DEBUG__) {
+      if (typeof window !== "undefined" && (window as any).__VASTE_DEBUG__) {
         console.info(...args);
       }
     } catch (e) {
@@ -25,5 +25,5 @@ export const logger = {
   },
   error: (...args: any[]) => {
     console.error(...args);
-  }
+  },
 };

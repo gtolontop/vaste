@@ -1,4 +1,4 @@
-const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8080';
+const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || "http://localhost:8080";
 
 export interface GameServer {
   id: number;
@@ -37,21 +37,21 @@ export interface CreateServerData {
 
 // Helper function to make authenticated requests
 async function apiRequest(endpoint: string, options: RequestInit = {}): Promise<any> {
-  const token = localStorage.getItem('vaste_token');
-  
+  const token = localStorage.getItem("vaste_token");
+
   const config: RequestInit = {
     headers: {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` }),
+      "Content-Type": "application/json",
+      ...(token && { Authorization: `Bearer ${token}` }),
       ...options.headers,
     },
     ...options,
   };
 
   const response = await fetch(`${BACKEND_URL}/api${endpoint}`, config);
-  
+
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({ error: 'Network error' }));
+    const errorData = await response.json().catch(() => ({ error: "Network error" }));
     throw new Error(errorData.error || `HTTP ${response.status}`);
   }
 
@@ -61,18 +61,18 @@ async function apiRequest(endpoint: string, options: RequestInit = {}): Promise<
 export const gameServerService = {
   // Get all public servers
   async getPublicServers(): Promise<GameServer[]> {
-    return await apiRequest('/game-servers/public');
+    return await apiRequest("/game-servers/public");
   },
 
   // Get user's servers
   async getMyServers(): Promise<GameServer[]> {
-    return await apiRequest('/game-servers/my-servers');
+    return await apiRequest("/game-servers/my-servers");
   },
 
   // Create new server
   async createServer(data: CreateServerData): Promise<{ server: GameServer; message: string }> {
-    return await apiRequest('/game-servers/create', {
-      method: 'POST',
+    return await apiRequest("/game-servers/create", {
+      method: "POST",
       body: JSON.stringify(data),
     });
   },
@@ -85,7 +85,7 @@ export const gameServerService = {
   // Update server
   async updateServer(uuid: string, data: Partial<CreateServerData>): Promise<{ server: GameServer; message: string }> {
     return await apiRequest(`/game-servers/${uuid}`, {
-      method: 'PUT',
+      method: "PUT",
       body: JSON.stringify(data),
     });
   },
@@ -93,28 +93,28 @@ export const gameServerService = {
   // Delete server
   async deleteServer(uuid: string): Promise<{ message: string }> {
     return await apiRequest(`/game-servers/${uuid}`, {
-      method: 'DELETE',
+      method: "DELETE",
     });
   },
 
   // Renew license
   async renewLicense(uuid: string): Promise<{ server: GameServer; message: string }> {
     return await apiRequest(`/game-servers/${uuid}/renew-license`, {
-      method: 'POST',
+      method: "POST",
     });
   },
 
   // Deactivate license
   async deactivateLicense(uuid: string): Promise<{ message: string }> {
     return await apiRequest(`/game-servers/${uuid}/deactivate-license`, {
-      method: 'POST',
+      method: "POST",
     });
   },
 
   // Reactivate license
   async reactivateLicense(uuid: string): Promise<{ message: string }> {
     return await apiRequest(`/game-servers/${uuid}/reactivate-license`, {
-      method: 'POST',
+      method: "POST",
     });
-  }
+  },
 };

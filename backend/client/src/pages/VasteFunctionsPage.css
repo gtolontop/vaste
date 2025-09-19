@@ -160,7 +160,7 @@
   background-color: #1a1a1a;
   padding: 1rem;
   border-radius: 8px;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-size: 1rem;
   color: #e0e0e0;
   border: 1px solid #333;
@@ -193,7 +193,7 @@
   background-color: #2d2d2d;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
 }
 
 .required {
@@ -207,7 +207,7 @@
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
   font-size: 0.8rem;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   border: 1px solid #444;
 }
 
@@ -236,7 +236,7 @@
   border-radius: 8px;
   padding: 1.5rem;
   overflow-x: auto;
-  font-family: 'Courier New', monospace;
+  font-family: "Courier New", monospace;
   font-size: 0.9rem;
   line-height: 1.5;
   color: #e0e0e0;
@@ -305,12 +305,12 @@
     flex-direction: column;
     height: auto;
   }
-  
+
   .functions-sidebar {
     width: 100%;
     max-height: 400px;
   }
-  
+
   .parameter-row {
     grid-template-columns: 1fr;
     gap: 0.5rem;
@@ -319,24 +319,24 @@
 
 /* Lua Syntax Highlighting */
 .lua-comment {
-  color: #6A9955;
+  color: #6a9955;
   font-style: italic;
 }
 
 .lua-string {
-  color: #CE9178;
+  color: #ce9178;
 }
 
 .lua-keyword {
-  color: #569CD6;
+  color: #569cd6;
   font-weight: bold;
 }
 
 .lua-number {
-  color: #B5CEA8;
+  color: #b5cea8;
 }
 
 .lua-function {
-  color: #DCDCAA;
+  color: #dcdcaa;
   font-weight: 500;
 }

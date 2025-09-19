@@ -1,12 +1,12 @@
-import { ClientMessage, ServerMessage, GameState, getBlockKey } from './types';
-import { User } from './services/auth.types';
-import { logger } from './utils/logger';
+import { ClientMessage, ServerMessage, GameState, getBlockKey } from "./types";
+import { User } from "./services/auth.types";
+import { logger } from "./utils/logger";
 
 // Lightweight unique id generator for action correlation (RFC4122 v4 style-ish)
 function generateId() {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (c) {
     const r = (Math.random() * 16) | 0;
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
@@ -31,11 +31,7 @@ export class NetworkManager {
   public onTeleport?: (x: number, y: number, z: number) => void;
   private authenticatedUser: User | null = null;
 
-  constructor(
-    onStateUpdate: (state: GameState) => void,
-    onConnectionChange: (connected: boolean) => void,
-    user?: User
-  ) {
+  constructor(onStateUpdate: (state: GameState) => void, onConnectionChange: (connected: boolean) => void, user?: User) {
     this.gameState = {
       playerId: null,
       players: new Map(),
@@ -44,7 +40,7 @@ export class NetworkManager {
       chunks: new Map(),
       chunkVersions: new Map(),
       connected: false,
-      playerPosition: null
+      playerPosition: null,
     };
     this.onStateUpdate = onStateUpdate;
     this.onConnectionChange = onConnectionChange;
@@ -59,7 +55,7 @@ export class NetworkManager {
   // Toggleable debug: set localStorage['vaste_debug_chunk_bumps'] = '1' to enable extra logs
   private debugChunkBumps: boolean = (() => {
     try {
-      return localStorage.getItem('vaste_debug_chunk_bumps') === '1';
+      return localStorage.getItem("vaste_debug_chunk_bumps") === "1";
     } catch (e) {
       return false;
     }
@@ -75,7 +71,14 @@ export class NetworkManager {
     this.chunkVersions.set(key, ver + 1);
     if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] bump ${key} -> ${ver + 1}`);
 
-    const faceDirs = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+    const faceDirs = [
+      [1, 0, 0],
+      [-1, 0, 0],
+      [0, 1, 0],
+      [0, -1, 0],
+      [0, 0, 1],
+      [0, 0, -1],
+    ];
     for (const d of faceDirs) {
       const nKey = `${cx + d[0]},${cy + d[1]},${cz + d[2]}`;
       const nv = this.chunkVersions.get(nKey) || 0;
@@ -92,23 +95,23 @@ export class NetworkManager {
         this.ws.onopen = () => {
           // Visible log for debugging connection lifecycle
           // eslint-disable-next-line no-console
-          console.log('[CLIENT] WebSocket opened to', serverUrl);
-          logger.info('[CLIENT] Connected to server');
-          
+          console.log("[CLIENT] WebSocket opened to", serverUrl);
+          logger.info("[CLIENT] Connected to server");
+
           // Send authentication info with JWT token
           if (this.authenticatedUser) {
             // Get the token from localStorage
-            const token = localStorage.getItem('vaste_token');
-            
+            const token = localStorage.getItem("vaste_token");
+
             this.sendMessage({
-              type: 'auth_info',
+              type: "auth_info",
               username: this.authenticatedUser.username,
               uuid: this.authenticatedUser.uuid,
-              token: token
+              token: token,
             } as any); // Temporaire jusqu'à ce qu'on mette à jour les types
             // after auth we will send chunk_have once server acknowledges auth and sends world_init
           }
-          
+
           this.gameState.connected = true;
           this.onConnectionChange(true);
           resolve();
@@ -126,10 +129,14 @@ export class NetworkManager {
                     try {
                       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
                       // @ts-ignore
-                      this.chunkProcessorWorker = new Worker(new URL('./workers/chunkProcessorWorker.ts', import.meta.url), { type: 'module' } as any);
+                      this.chunkProcessorWorker = new Worker(new URL("./workers/chunkProcessorWorker.ts", import.meta.url), { type: "module" } as any);
                     } catch (e) {
                       // fallback to classic Worker if bundler supports .js
-                      try { this.chunkProcessorWorker = new Worker('/src/workers/chunkProcessorWorker.js'); } catch (e2) { this.chunkProcessorWorker = null; }
+                      try {
+                        this.chunkProcessorWorker = new Worker("/src/workers/chunkProcessorWorker.js");
+                      } catch (e2) {
+                        this.chunkProcessorWorker = null;
+                      }
                     }
                   }
                   if (!this.chunkProcessorWorker) {
@@ -155,26 +162,34 @@ export class NetworkManager {
                     worker.onmessage = (evWorker: MessageEvent) => {
                       const d = evWorker.data as any;
                       if (!d) return;
-                      if (d.type === 'decoded') {
+                      if (d.type === "decoded") {
                         // callback key may be requestId (preferred) or seq (fallback for compatibility)
-                        const key = (d.requestId != null) ? d.requestId : d.seq;
+                        const key = d.requestId != null ? d.requestId : d.seq;
                         // If we recorded when this buffer was posted to the worker, compute transfer+decode timings
                         try {
                           const postedAt = this._chunkBufferTimes.get(key as number);
                           if (postedAt != null) {
                             const now = Date.now();
                             const transferPlusDecodeMs = now - postedAt;
-                            const decodeMs = (d.decodeMs != null) ? d.decodeMs : 0;
-                              try {
-                                // eslint-disable-next-line no-console
-                                console.log(`[CLIENT][TIMINGS] chunk ${d.cx},${d.cy},${d.cz} seq=${d.seq} requestId=${d.requestId} transfer+decode=${transferPlusDecodeMs}ms decodeMs=${decodeMs}ms`);
-                              } catch (e) { /* ignore console errors */ }
+                            const decodeMs = d.decodeMs != null ? d.decodeMs : 0;
+                            try {
+                              // eslint-disable-next-line no-console
+                              console.log(`[CLIENT][TIMINGS] chunk ${d.cx},${d.cy},${d.cz} seq=${d.seq} requestId=${d.requestId} transfer+decode=${transferPlusDecodeMs}ms decodeMs=${decodeMs}ms`);
+                            } catch (e) {
+                              /* ignore console errors */
+                            }
                             this._chunkBufferTimes.delete(key as number);
                           }
-                        } catch (e) { /* swallow timing errors */ }
+                        } catch (e) {
+                          /* swallow timing errors */
+                        }
                         const cb = this.chunkWorkerCallbacks.get(key);
                         if (cb) {
-                          try { cb(d); } catch (e) { /* swallow */ }
+                          try {
+                            cb(d);
+                          } catch (e) {
+                            /* swallow */
+                          }
                           this.chunkWorkerCallbacks.delete(key);
                         }
                       }
@@ -214,22 +229,20 @@ export class NetworkManager {
                         const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
                         if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                           try {
-                            const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+                            const raw = localStorage.getItem("vaste_applied_chunk_seqs");
                             const set = raw ? JSON.parse(raw) : [];
                             if (!set.includes(seq)) {
                               set.push(seq);
-                              localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                              localStorage.setItem("vaste_applied_chunk_seqs", JSON.stringify(set));
                             }
                           } catch (e) {}
-                          this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
+                          this.ws.send(JSON.stringify({ type: "chunk_ack", chunkKey: ackKey, seq }));
                         }
                       } catch (e) {}
 
                       // schedule a UI update on the next animation frame if not already scheduled
                       if (this.scheduledUpdateHandle == null) {
-                        const scheduleFn = (typeof window !== 'undefined' && (window as any).requestAnimationFrame) ?
-                          ((fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn)) :
-                          ((fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16));
+                        const scheduleFn = typeof window !== "undefined" && (window as any).requestAnimationFrame ? (fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn) : (fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16);
                         this.scheduledUpdateHandle = scheduleFn(() => {
                           try {
                             // Apply all pending chunk swaps
@@ -241,8 +254,10 @@ export class NetworkManager {
                             for (const ck of Array.from(this.pendingChunkKeys)) {
                               const ver = this.chunkVersions.get(ck) || 0;
                               this.chunkVersions.set(ck, ver + 1);
-                              const [cxStr, cyStr, czStr] = ck.split(',');
-                              const cx = Number(cxStr), cy = Number(cyStr), cz = Number(czStr);
+                              const [cxStr, cyStr, czStr] = ck.split(",");
+                              const cx = Number(cxStr),
+                                cy = Number(cyStr),
+                                cz = Number(czStr);
                               this.bumpChunkAndFaceNeighbors(cx, cy, cz);
                             }
                             this.gameState.chunkVersions = new Map(this.chunkVersions);
@@ -263,8 +278,10 @@ export class NetworkManager {
                     // record posted timestamp and post the chunk buffer to worker (transfer)
                     try {
                       this._chunkBufferTimes.set(requestId, Date.now());
-                      (worker as any).postMessage({ type: 'decode', buffer: chunkAb, requestId }, [chunkAb]);
-                    } catch (e) { /* swallow */ }
+                      (worker as any).postMessage({ type: "decode", buffer: chunkAb, requestId }, [chunkAb]);
+                    } catch (e) {
+                      /* swallow */
+                    }
                   };
 
                   // If the buffer is a CHUNK_BATCH envelope, split and post individual chunk buffers
@@ -273,9 +290,11 @@ export class NetworkManager {
                   if (msgTypePeek === 2) {
                     // envelope format: uint8 msgType(2), uint32 count, then for each: uint32 len, <len bytes>
                     let off = 1;
-                    const count = dvPeek.getUint32(off, true); off += 4;
+                    const count = dvPeek.getUint32(off, true);
+                    off += 4;
                     for (let i = 0; i < count; i++) {
-                      const len = dvPeek.getUint32(off, true); off += 4;
+                      const len = dvPeek.getUint32(off, true);
+                      off += 4;
                       const chunkAb = ab.slice(off, off + len);
                       off += len;
                       postChunkToWorker(chunkAb);
@@ -314,22 +333,20 @@ export class NetworkManager {
                       const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
                       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                         try {
-                          const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+                          const raw = localStorage.getItem("vaste_applied_chunk_seqs");
                           const set = raw ? JSON.parse(raw) : [];
                           if (!set.includes(seq)) {
                             set.push(seq);
-                            localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
+                            localStorage.setItem("vaste_applied_chunk_seqs", JSON.stringify(set));
                           }
                         } catch (e) {}
-                        this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
+                        this.ws.send(JSON.stringify({ type: "chunk_ack", chunkKey: ackKey, seq }));
                       }
                     } catch (e) {}
 
                     // schedule a UI update on the next animation frame if not already scheduled
                     if (this.scheduledUpdateHandle == null) {
-                      const scheduleFn = (typeof window !== 'undefined' && (window as any).requestAnimationFrame) ?
-                        ((fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn)) :
-                        ((fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16));
+                      const scheduleFn = typeof window !== "undefined" && (window as any).requestAnimationFrame ? (fn: FrameRequestCallback) => (window as any).requestAnimationFrame(fn) : (fn: FrameRequestCallback) => setTimeout(() => fn(Date.now()), 16);
                       this.scheduledUpdateHandle = scheduleFn(() => {
                         try {
                           // Apply all pending chunk swaps
@@ -343,8 +360,10 @@ export class NetworkManager {
                           for (const ck of Array.from(this.pendingChunkKeys)) {
                             const ver = this.chunkVersions.get(ck) || 0;
                             this.chunkVersions.set(ck, ver + 1);
-                            const [cxStr, cyStr, czStr] = ck.split(',');
-                            const cx = Number(cxStr), cy = Number(cyStr), cz = Number(czStr);
+                            const [cxStr, cyStr, czStr] = ck.split(",");
+                            const cx = Number(cxStr),
+                              cy = Number(cyStr),
+                              cz = Number(czStr);
                             this.bumpChunkAndFaceNeighbors(cx, cy, cz);
                           }
                           this.gameState.chunkVersions = new Map(this.chunkVersions);
@@ -368,8 +387,10 @@ export class NetworkManager {
                   // Record posted timestamp and post buffer transferable to worker with requestId
                   try {
                     this._chunkBufferTimes.set(requestId, Date.now());
-                    worker.postMessage({ type: 'decode', buffer: ab, requestId }, [ab]);
-                  } catch (e) { /* swallow */ }
+                    worker.postMessage({ type: "decode", buffer: ab, requestId }, [ab]);
+                  } catch (e) {
+                    /* swallow */
+                  }
                 } catch (e) {
                   // swallow worker errors to avoid noisy logs in client
                 }
@@ -387,22 +408,22 @@ export class NetworkManager {
             const message: ServerMessage = JSON.parse(event.data as string);
             this.handleServerMessage(message);
           } catch (error) {
-            logger.error('[CLIENT] Error parsing server message:', error);
+            logger.error("[CLIENT] Error parsing server message:", error);
           }
         };
 
         this.ws.onclose = () => {
           // eslint-disable-next-line no-console
-          console.log('[CLIENT] WebSocket closed');
-          logger.info('[CLIENT] Disconnected from server');
+          console.log("[CLIENT] WebSocket closed");
+          logger.info("[CLIENT] Disconnected from server");
           this.gameState.connected = false;
           this.onConnectionChange(false);
         };
 
         this.ws.onerror = (error) => {
           // eslint-disable-next-line no-console
-          console.error('[CLIENT] WebSocket error observed:', error);
-          logger.error('[CLIENT] WebSocket error:', error);
+          console.error("[CLIENT] WebSocket error observed:", error);
+          logger.error("[CLIENT] WebSocket error:", error);
           this.gameState.connected = false;
           this.onConnectionChange(false);
           reject(error);
@@ -423,31 +444,31 @@ export class NetworkManager {
   sendMessage(message: ClientMessage) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(message));
-      
+
       // Track player position locally
-      if (message.type === 'player_move') {
+      if (message.type === "player_move") {
         this.gameState.playerPosition = {
           x: message.x,
           y: message.y,
-          z: message.z
+          z: message.z,
         };
       }
     } else {
-      logger.warn('[CLIENT] Cannot send message: not connected');
+      logger.warn("[CLIENT] Cannot send message: not connected");
     }
   }
 
   // Send a block action (place/break) with optimistic update and an actionId for reconciliation
   sendBlockAction(message: ClientMessage & { actionId?: string }) {
-  const actionId = (message as any).actionId || generateId();
+    const actionId = (message as any).actionId || generateId();
     (message as any).actionId = actionId;
 
     // Apply optimistic update locally
-    if (message.type === 'break_block') {
+    if (message.type === "break_block") {
       const key = getBlockKey(message.x, message.y, message.z);
       // store previous block so we can rollback if needed
       const prev = this.gameState.blocks.get(key) || null;
-      this.pendingActions.set(actionId, { type: 'break', key, prev });
+      this.pendingActions.set(actionId, { type: "break", key, prev });
       this.gameState.blocks.delete(key);
       // Update chunk map
       const cx = Math.floor(message.x / 16);
@@ -456,27 +477,27 @@ export class NetworkManager {
       const chunkKey = `${cx},${cy},${cz}`;
       const chunkMap = this.gameState.chunks.get(chunkKey);
       if (chunkMap) {
-  // create a new Map instance to ensure React/consumers pick up the change
-  const newMap = new Map(chunkMap);
-  newMap.delete(key);
-  this.gameState.chunks.set(chunkKey, newMap);
-  const ver = this.chunkVersions.get(chunkKey) || 0;
-  this.chunkVersions.set(chunkKey, ver + 1);
-  this.gameState.chunkVersions = new Map(this.chunkVersions);
+        // create a new Map instance to ensure React/consumers pick up the change
+        const newMap = new Map(chunkMap);
+        newMap.delete(key);
+        this.gameState.chunks.set(chunkKey, newMap);
+        const ver = this.chunkVersions.get(chunkKey) || 0;
+        this.chunkVersions.set(chunkKey, ver + 1);
+        this.gameState.chunkVersions = new Map(this.chunkVersions);
       }
       // Bump only the chunk and its face-adjacent neighbors (6 neighbors).
       this.bumpChunkAndFaceNeighbors(cx, cy, cz);
       this.gameState.chunkVersions = new Map(this.chunkVersions);
       this.onStateUpdate({ ...this.gameState });
-    } else if (message.type === 'place_block') {
+    } else if (message.type === "place_block") {
       const key = getBlockKey(message.x, message.y, message.z);
       const prev = this.gameState.blocks.get(key) || null;
-      this.pendingActions.set(actionId, { type: 'place', key, prev });
+      this.pendingActions.set(actionId, { type: "place", key, prev });
       this.gameState.blocks.set(key, {
         x: (message as any).x,
         y: (message as any).y,
         z: (message as any).z,
-        type: (message as any).blockType || 1
+        type: (message as any).blockType || 1,
       });
       // Update chunk map for optimistic placement
       const pcx = Math.floor((message as any).x / 16);
@@ -489,11 +510,11 @@ export class NetworkManager {
         x: (message as any).x,
         y: (message as any).y,
         z: (message as any).z,
-        type: (message as any).blockType || 1
+        type: (message as any).blockType || 1,
       });
       this.gameState.chunks.set(pChunkKey, newChunkMap);
-  const pVer = this.chunkVersions.get(pChunkKey) || 0;
-  this.chunkVersions.set(pChunkKey, pVer + 1);
+      const pVer = this.chunkVersions.get(pChunkKey) || 0;
+      this.chunkVersions.set(pChunkKey, pVer + 1);
       // Bump only the chunk and its face-adjacent neighbors (6 neighbors).
       this.bumpChunkAndFaceNeighbors(pcx, pcy, pcz);
       this.gameState.chunkVersions = new Map(this.chunkVersions);
@@ -506,49 +527,49 @@ export class NetworkManager {
   }
 
   // Map of pending optimistic actions by actionId
-  private pendingActions: Map<string, { type: 'break' | 'place'; key: string; prev: any }> = new Map();
+  private pendingActions: Map<string, { type: "break" | "place"; key: string; prev: any }> = new Map();
 
   private handleServerMessage(message: ServerMessage) {
     switch (message.type) {
-      case 'world_init':
+      case "world_init":
         this.handleWorldInit(message);
         break;
-      case 'chunks_update':
+      case "chunks_update":
         this.handleChunksUpdate(message);
         break;
-      case 'block_update':
+      case "block_update":
         this.handleBlockUpdate(message);
         break;
-      case 'block_action_result':
+      case "block_action_result":
         this.handleBlockActionResult(message as any);
         break;
-      case 'player_update':
+      case "player_update":
         this.handlePlayerUpdate(message);
         break;
-      case 'player_disconnect':
+      case "player_disconnect":
         this.handlePlayerDisconnect(message);
         break;
-      case 'teleport':
+      case "teleport":
         this.handleTeleport(message);
         break;
-        default:
-        logger.warn('[CLIENT] Unknown server message type:', (message as any).type);
+      default:
+        logger.warn("[CLIENT] Unknown server message type:", (message as any).type);
     }
   }
 
   private handleWorldInit(message: any) {
-  // visible debug
-  // eslint-disable-next-line no-console
-  console.log('[CLIENT] Received world_init from server; blocks=', (message.blocks || []).length);
-  logger.info('[CLIENT] Received world initialization');
+    // visible debug
+    // eslint-disable-next-line no-console
+    console.log("[CLIENT] Received world_init from server; blocks=", (message.blocks || []).length);
+    logger.info("[CLIENT] Received world initialization");
     this.gameState.playerId = message.playerId;
     this.gameState.worldSize = message.worldSize;
     // inform server about already-applied chunk seqs so server can avoid resending
     try {
-      const raw = localStorage.getItem('vaste_applied_chunk_seqs');
+      const raw = localStorage.getItem("vaste_applied_chunk_seqs");
       const seqs = raw ? JSON.parse(raw) : [];
       if (Array.isArray(seqs) && seqs.length > 0 && this.ws && this.ws.readyState === WebSocket.OPEN) {
-        this.sendMessage({ type: 'chunk_have', seqs } as any);
+        this.sendMessage({ type: "chunk_have", seqs } as any);
       }
     } catch (e) {}
     // Process blocks incrementally to avoid freezing the UI
@@ -613,7 +634,7 @@ export class NetworkManager {
         this.onStateUpdate({ ...this.gameState });
 
         if (idx < total) {
-          if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+          if (typeof window !== "undefined" && (window as any).requestAnimationFrame) {
             (window as any).requestAnimationFrame(step);
           } else {
             setTimeout(step, 16);
@@ -656,7 +677,7 @@ export class NetworkManager {
       };
 
       // Start processing this item
-      if (typeof window !== 'undefined' && (window as any).requestAnimationFrame) {
+      if (typeof window !== "undefined" && (window as any).requestAnimationFrame) {
         (window as any).requestAnimationFrame(step);
       } else {
         setTimeout(step, 0);
@@ -669,8 +690,8 @@ export class NetworkManager {
 
   private handleBlockUpdate(message: any) {
     const key = getBlockKey(message.x, message.y, message.z);
-    
-    if (message.action === 'break') {
+
+    if (message.action === "break") {
       this.gameState.blocks.delete(key);
       // update chunk map (replace with new Map instance)
       const cx = Math.floor(message.x / 16);
@@ -679,26 +700,26 @@ export class NetworkManager {
       const chunkKey = `${cx},${cy},${cz}`;
       const cm = this.gameState.chunks.get(chunkKey);
       if (cm) {
-  const newCm = new Map(cm);
-  newCm.delete(key);
-  this.gameState.chunks.set(chunkKey, newCm);
-  const ver = this.chunkVersions.get(chunkKey) || 0;
-  this.chunkVersions.set(chunkKey, ver + 1);
-  this.gameState.chunkVersions = new Map(this.chunkVersions);
+        const newCm = new Map(cm);
+        newCm.delete(key);
+        this.gameState.chunks.set(chunkKey, newCm);
+        const ver = this.chunkVersions.get(chunkKey) || 0;
+        this.chunkVersions.set(chunkKey, ver + 1);
+        this.gameState.chunkVersions = new Map(this.chunkVersions);
         // bump only face-adjacent neighbors
         {
-          const [ccx, ccy, ccz] = chunkKey.split(',').map(Number);
+          const [ccx, ccy, ccz] = chunkKey.split(",").map(Number);
           this.bumpChunkAndFaceNeighbors(ccx, ccy, ccz);
           this.gameState.chunkVersions = new Map(this.chunkVersions);
         }
       }
-  logger.info(`[CLIENT] Block broken at (${message.x}, ${message.y}, ${message.z})`);
-    } else if (message.action === 'place') {
+      logger.info(`[CLIENT] Block broken at (${message.x}, ${message.y}, ${message.z})`);
+    } else if (message.action === "place") {
       this.gameState.blocks.set(key, {
         x: message.x,
         y: message.y,
         z: message.z,
-        type: message.blockType || 1
+        type: message.blockType || 1,
       });
       // update chunk map
       const pcx = Math.floor(message.x / 16);
@@ -709,11 +730,12 @@ export class NetworkManager {
       const newMap = new Map(existing);
       newMap.set(key, { x: message.x, y: message.y, z: message.z, type: message.blockType || 1 });
       this.gameState.chunks.set(pChunkKey, newMap);
-  const pVer = this.chunkVersions.get(pChunkKey) || 0; this.chunkVersions.set(pChunkKey, pVer + 1);
-  // bump neighbors
+      const pVer = this.chunkVersions.get(pChunkKey) || 0;
+      this.chunkVersions.set(pChunkKey, pVer + 1);
+      // bump neighbors
       this.bumpChunkAndFaceNeighbors(pcx, pcy, pcz);
       this.gameState.chunkVersions = new Map(this.chunkVersions);
-  logger.info(`[CLIENT] Block placed at (${message.x}, ${message.y}, ${message.z})`);
+      logger.info(`[CLIENT] Block placed at (${message.x}, ${message.y}, ${message.z})`);
     }
 
     this.onStateUpdate({ ...this.gameState });
@@ -733,11 +755,11 @@ export class NetworkManager {
     } else {
       // Server rejected: rollback optimistic change
       logger.warn(`[CLIENT] Block action ${actionId} rejected: ${reason}`);
-      if (pending.type === 'break') {
+      if (pending.type === "break") {
         if (pending.prev) {
           this.gameState.blocks.set(pending.key, pending.prev);
           // restore to chunk map
-          const coords = pending.key.split(',').map(Number);
+          const coords = pending.key.split(",").map(Number);
           const rcx = Math.floor(coords[0] / 16);
           const rcy = Math.floor(coords[1] / 16);
           const rcz = Math.floor(coords[2] / 16);
@@ -753,7 +775,7 @@ export class NetworkManager {
         } else {
           this.gameState.blocks.delete(pending.key);
           // remove from chunk
-          const coords = pending.key.split(',').map(Number);
+          const coords = pending.key.split(",").map(Number);
           const rcx3 = Math.floor(coords[0] / 16);
           const rcy3 = Math.floor(coords[1] / 16);
           const rcz3 = Math.floor(coords[2] / 16);
@@ -776,12 +798,12 @@ export class NetworkManager {
 
   private handlePlayerUpdate(message: any) {
     const existingPlayer = this.gameState.players.get(message.id);
-    
+
     this.gameState.players.set(message.id, {
       id: message.id,
       x: message.x,
       y: message.y,
-      z: message.z
+      z: message.z,
     });
 
     if (!existingPlayer) {

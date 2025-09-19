@@ -1,13 +1,13 @@
 // Network message types
 export interface PlayerMoveMessage {
-  type: 'player_move';
+  type: "player_move";
   x: number;
   y: number;
   z: number;
 }
 
 export interface BreakBlockMessage {
-  type: 'break_block';
+  type: "break_block";
   x: number;
   y: number;
   z: number;
@@ -15,7 +15,7 @@ export interface BreakBlockMessage {
 }
 
 export interface PlaceBlockMessage {
-  type: 'place_block';
+  type: "place_block";
   x: number;
   y: number;
   z: number;
@@ -26,20 +26,20 @@ export interface PlaceBlockMessage {
 export type ClientMessage = PlayerMoveMessage | BreakBlockMessage | PlaceBlockMessage;
 
 export interface WorldInitMessage {
-  type: 'world_init';
+  type: "world_init";
   playerId: string;
   blocks: Block[];
   worldSize: number;
 }
 
 export interface ChunksUpdateMessage {
-  type: 'chunks_update';
+  type: "chunks_update";
   blocks: Block[];
 }
 
 export interface BlockUpdateMessage {
-  type: 'block_update';
-  action: 'break' | 'place';
+  type: "block_update";
+  action: "break" | "place";
   x: number;
   y: number;
   z: number;
@@ -49,7 +49,7 @@ export interface BlockUpdateMessage {
 }
 
 export interface BlockActionResultMessage {
-  type: 'block_action_result';
+  type: "block_action_result";
   actionId: string;
   success: boolean;
   reason?: string;
@@ -59,7 +59,7 @@ export interface BlockActionResultMessage {
 }
 
 export interface PlayerUpdateMessage {
-  type: 'player_update';
+  type: "player_update";
   id: string;
   x: number;
   y: number;
@@ -67,12 +67,12 @@ export interface PlayerUpdateMessage {
 }
 
 export interface PlayerDisconnectMessage {
-  type: 'player_disconnect';
+  type: "player_disconnect";
   id: string;
 }
 
 export interface TeleportMessage {
-  type: 'teleport';
+  type: "teleport";
   x: number;
   y: number;
   z: number;

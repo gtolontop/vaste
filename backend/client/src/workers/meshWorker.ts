@@ -5,7 +5,12 @@
 
 type Block = { x: number; y: number; z: number; type: number };
 
-interface AtlasTile { u0: number; v0: number; u1: number; v1: number }
+interface AtlasTile {
+  u0: number;
+  v0: number;
+  u1: number;
+  v1: number;
+}
 
 interface AtlasMeta {
   tileSize: number;
@@ -14,9 +19,11 @@ interface AtlasMeta {
 }
 
 interface MeshRequest {
-  type: 'meshChunk';
+  type: "meshChunk";
   chunkKey: string;
-  cx: number; cy: number; cz: number;
+  cx: number;
+  cy: number;
+  cz: number;
   blocks?: Block[];
   // fast-path sparse typed arrays: local indices (0..4095) and block types
   indices?: Uint16Array;
@@ -25,7 +32,7 @@ interface MeshRequest {
 }
 
 interface MeshResponse {
-  type: 'meshResult';
+  type: "meshResult";
   chunkKey: string;
   positions: ArrayBuffer;
   normals: ArrayBuffer;
@@ -35,11 +42,13 @@ interface MeshResponse {
 
 const CHUNK_SIZE = 16;
 
-function idx(x:number,y:number,z:number){ return ((y*CHUNK_SIZE + z)*CHUNK_SIZE) + x; }
+function idx(x: number, y: number, z: number) {
+  return (y * CHUNK_SIZE + z) * CHUNK_SIZE + x;
+}
 
-onmessage = function(ev: MessageEvent) {
+onmessage = function (ev: MessageEvent) {
   const msg = ev.data as MeshRequest;
-  if (!msg || msg.type !== 'meshChunk') return;
+  if (!msg || msg.type !== "meshChunk") return;
 
   const baseX = msg.cx * CHUNK_SIZE;
   const baseY = msg.cy * CHUNK_SIZE;
@@ -54,14 +63,16 @@ onmessage = function(ev: MessageEvent) {
     const n = Math.min(inds.length, types.length);
     for (let i = 0; i < n; i++) {
       const localIdx = inds[i];
-      if (localIdx < 0 || localIdx >= CHUNK_SIZE*CHUNK_SIZE*CHUNK_SIZE) continue;
+      if (localIdx < 0 || localIdx >= CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE) continue;
       volume[localIdx] = types[i];
     }
   } else if ((msg as any).blocks && Array.isArray((msg as any).blocks)) {
     for (const b of (msg as any).blocks) {
-      const lx = b.x - baseX; const ly = b.y - baseY; const lz = b.z - baseZ;
+      const lx = b.x - baseX;
+      const ly = b.y - baseY;
+      const lz = b.z - baseZ;
       if (lx < 0 || lx >= CHUNK_SIZE || ly < 0 || ly >= CHUNK_SIZE || lz < 0 || lz >= CHUNK_SIZE) continue;
-      volume[idx(lx,ly,lz)] = b.type;
+      volume[idx(lx, ly, lz)] = b.type;
     }
   }
 
@@ -73,12 +84,19 @@ onmessage = function(ev: MessageEvent) {
   const meshStart = Date.now();
 
   // Directions: +X, -X, +Y, -Y, +Z, -Z
-  const dirs = [ [1,0,0], [-1,0,0], [0,1,0], [0,-1,0], [0,0,1], [0,0,-1] ];
+  const dirs = [
+    [1, 0, 0],
+    [-1, 0, 0],
+    [0, 1, 0],
+    [0, -1, 0],
+    [0, 0, 1],
+    [0, 0, -1],
+  ];
 
   for (let z = 0; z < CHUNK_SIZE; z++) {
     for (let y = 0; y < CHUNK_SIZE; y++) {
       for (let x = 0; x < CHUNK_SIZE; x++) {
-        const t = volume[idx(x,y,z)];
+        const t = volume[idx(x, y, z)];
         if (!t) continue;
 
         const bx = baseX + x - 0.5;
@@ -87,28 +105,75 @@ onmessage = function(ev: MessageEvent) {
 
         for (let face = 0; face < dirs.length; face++) {
           const dir = dirs[face];
-          const nx = x + dir[0], ny = y + dir[1], nz = z + dir[2];
+          const nx = x + dir[0],
+            ny = y + dir[1],
+            nz = z + dir[2];
           let neighbor = 0;
           if (nx >= 0 && nx < CHUNK_SIZE && ny >= 0 && ny < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE) {
-            neighbor = volume[idx(nx,ny,nz)];
+            neighbor = volume[idx(nx, ny, nz)];
           }
           if (neighbor !== 0) continue; // face occluded
 
           // compute normal
-          const normal = [0,0,0];
-          if (face === 0) normal[0] = 1; else if (face === 1) normal[0] = -1;
-          if (face === 2) normal[1] = 1; else if (face === 3) normal[1] = -1;
-          if (face === 4) normal[2] = 1; else if (face === 5) normal[2] = -1;
+          const normal = [0, 0, 0];
+          if (face === 0) normal[0] = 1;
+          else if (face === 1) normal[0] = -1;
+          if (face === 2) normal[1] = 1;
+          else if (face === 3) normal[1] = -1;
+          if (face === 4) normal[2] = 1;
+          else if (face === 5) normal[2] = -1;
 
           // corners per face (matching original orientation)
           let corners: number[][] = [];
           switch (face) {
-            case 0: corners = [[bx+1,by, bz],[bx+1,by+1,bz],[bx+1,by+1,bz+1],[bx+1,by,bz+1]]; break; // +X
-            case 1: corners = [[bx,by,bz+1],[bx,by+1,bz+1],[bx,by+1,bz],[bx,by,bz]]; break; // -X
-            case 2: corners = [[bx,by+1,bz],[bx,by+1,bz+1],[bx+1,by+1,bz+1],[bx+1,by+1,bz]]; break; // +Y
-            case 3: corners = [[bx,by,bz+1],[bx,by,bz],[bx+1,by,bz],[bx+1,by,bz+1]]; break; // -Y
-            case 4: corners = [[bx,by,bz+1],[bx+1,by,bz+1],[bx+1,by+1,bz+1],[bx,by+1,bz+1]]; break; // +Z
-            case 5: corners = [[bx+1,by,bz],[bx,by,bz],[bx,by+1,bz],[bx+1,by+1,bz]]; break; // -Z
+            case 0:
+              corners = [
+                [bx + 1, by, bz],
+                [bx + 1, by + 1, bz],
+                [bx + 1, by + 1, bz + 1],
+                [bx + 1, by, bz + 1],
+              ];
+              break; // +X
+            case 1:
+              corners = [
+                [bx, by, bz + 1],
+                [bx, by + 1, bz + 1],
+                [bx, by + 1, bz],
+                [bx, by, bz],
+              ];
+              break; // -X
+            case 2:
+              corners = [
+                [bx, by + 1, bz],
+                [bx, by + 1, bz + 1],
+                [bx + 1, by + 1, bz + 1],
+                [bx + 1, by + 1, bz],
+              ];
+              break; // +Y
+            case 3:
+              corners = [
+                [bx, by, bz + 1],
+                [bx, by, bz],
+                [bx + 1, by, bz],
+                [bx + 1, by, bz + 1],
+              ];
+              break; // -Y
+            case 4:
+              corners = [
+                [bx, by, bz + 1],
+                [bx + 1, by, bz + 1],
+                [bx + 1, by + 1, bz + 1],
+                [bx, by + 1, bz + 1],
+              ];
+              break; // +Z
+            case 5:
+              corners = [
+                [bx + 1, by, bz],
+                [bx, by, bz],
+                [bx, by + 1, bz],
+                [bx + 1, by + 1, bz],
+              ];
+              break; // -Z
           }
 
           for (let ci = 0; ci < 4; ci++) {
@@ -126,43 +191,43 @@ onmessage = function(ev: MessageEvent) {
             if (mapEntry.u0 !== undefined) {
               const m = mapEntry as AtlasTile;
               // corners order -> map so that v corresponds to y (top corners get v1)
-                for (let ci = 0; ci < 4; ci++) {
-                  const cx = corners[ci][0];
-                  const cy = corners[ci][1];
-                  const cz = corners[ci][2];
-                  let uLocal = 0;
-                  let vLocal = 0;
-                  // Determine local UV axes per face so V always maps to world Y (up)
-                  switch (face) {
-                    case 0: // +X face: U <- +Z, V <- +Y (flip V for correct orientation)
-                      uLocal = cz - bz;
-                      vLocal = 1 - (cy - by);
-                      break;
-                    case 1: // -X face: U <- -Z, V <- +Y (flip V)
-                      uLocal = 1 - (cz - bz);
-                      vLocal = 1 - (cy - by);
-                      break;
-                    case 2: // +Y top: U <- +X, V <- +Z
-                      uLocal = cx - bx;
-                      vLocal = cz - bz;
-                      break;
-                    case 3: // -Y bottom: U <- +X, V <- -Z
-                      uLocal = cx - bx;
-                      vLocal = 1 - (cz - bz);
-                      break;
-                    case 4: // +Z face: U <- -X, V <- +Y (flip V)
-                      uLocal = 1 - (cx - bx);
-                      vLocal = 1 - (cy - by);
-                      break;
-                    case 5: // -Z face: U <- +X, V <- +Y (flip V)
-                      uLocal = cx - bx;
-                      vLocal = 1 - (cy - by);
-                      break;
-                  }
-                  const u = m.u0 + uLocal * (m.u1 - m.u0);
-                  const v = m.v0 + vLocal * (m.v1 - m.v0);
-                  uvs.push(u, v);
+              for (let ci = 0; ci < 4; ci++) {
+                const cx = corners[ci][0];
+                const cy = corners[ci][1];
+                const cz = corners[ci][2];
+                let uLocal = 0;
+                let vLocal = 0;
+                // Determine local UV axes per face so V always maps to world Y (up)
+                switch (face) {
+                  case 0: // +X face: U <- +Z, V <- +Y (flip V for correct orientation)
+                    uLocal = cz - bz;
+                    vLocal = 1 - (cy - by);
+                    break;
+                  case 1: // -X face: U <- -Z, V <- +Y (flip V)
+                    uLocal = 1 - (cz - bz);
+                    vLocal = 1 - (cy - by);
+                    break;
+                  case 2: // +Y top: U <- +X, V <- +Z
+                    uLocal = cx - bx;
+                    vLocal = cz - bz;
+                    break;
+                  case 3: // -Y bottom: U <- +X, V <- -Z
+                    uLocal = cx - bx;
+                    vLocal = 1 - (cz - bz);
+                    break;
+                  case 4: // +Z face: U <- -X, V <- +Y (flip V)
+                    uLocal = 1 - (cx - bx);
+                    vLocal = 1 - (cy - by);
+                    break;
+                  case 5: // -Z face: U <- +X, V <- +Y (flip V)
+                    uLocal = cx - bx;
+                    vLocal = 1 - (cy - by);
+                    break;
                 }
+                const u = m.u0 + uLocal * (m.u1 - m.u0);
+                const v = m.v0 + vLocal * (m.v1 - m.v0);
+                uvs.push(u, v);
+              }
               pushed = true;
             } else {
               // choose face-specific mapping: prefer explicit face mapping, then side, then all
@@ -181,12 +246,30 @@ onmessage = function(ev: MessageEvent) {
                   let uLocal = 0;
                   let vLocal = 0;
                   switch (face) {
-                    case 0: uLocal = cz - bz; vLocal = 1 - (cy - by); break;
-                    case 1: uLocal = 1 - (cz - bz); vLocal = 1 - (cy - by); break;
-                    case 2: uLocal = cx - bx; vLocal = cz - bz; break;
-                    case 3: uLocal = cx - bx; vLocal = 1 - (cz - bz); break;
-                    case 4: uLocal = 1 - (cx - bx); vLocal = 1 - (cy - by); break;
-                    case 5: uLocal = cx - bx; vLocal = 1 - (cy - by); break;
+                    case 0:
+                      uLocal = cz - bz;
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 1:
+                      uLocal = 1 - (cz - bz);
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 2:
+                      uLocal = cx - bx;
+                      vLocal = cz - bz;
+                      break;
+                    case 3:
+                      uLocal = cx - bx;
+                      vLocal = 1 - (cz - bz);
+                      break;
+                    case 4:
+                      uLocal = 1 - (cx - bx);
+                      vLocal = 1 - (cy - by);
+                      break;
+                    case 5:
+                      uLocal = cx - bx;
+                      vLocal = 1 - (cy - by);
+                      break;
                   }
                   const u = tile.u0 + uLocal * (tile.u1 - tile.u0);
                   const v = tile.v0 + vLocal * (tile.v1 - tile.v0);
@@ -197,14 +280,14 @@ onmessage = function(ev: MessageEvent) {
             }
           }
           if (!pushed) {
-            uvs.push(0,0,1,0,1,1,0,1);
+            uvs.push(0, 0, 1, 0, 1, 1, 0, 1);
           }
 
           // winding: keep consistent so lighting works
           if (normal[0] + normal[1] + normal[2] > 0) {
-            indices.push(vi, vi+1, vi+2, vi, vi+2, vi+3);
+            indices.push(vi, vi + 1, vi + 2, vi, vi + 2, vi + 3);
           } else {
-            indices.push(vi, vi+2, vi+1, vi, vi+3, vi+2);
+            indices.push(vi, vi + 2, vi + 1, vi, vi + 3, vi + 2);
           }
           vi += 4;
         }
@@ -219,13 +302,13 @@ onmessage = function(ev: MessageEvent) {
   const idxBuf = new Uint32Array(indices).buffer;
 
   const resp: MeshResponse & { meshMs?: number } = {
-    type: 'meshResult',
+    type: "meshResult",
     chunkKey: msg.chunkKey,
     positions: posBuf,
     normals: normBuf,
     uvs: uvBuf,
     indices: idxBuf,
-    meshMs
+    meshMs,
   };
 
   // Transfer buffers back to main thread
