@@ -31,6 +31,10 @@ class World {
     // Chunk cache: Map keyed by `${cx},${cz}` -> {data: Uint8Array, lastAccess: Date}
     this.chunkCache = new Map();
     this.maxCachedChunks = options.maxCachedChunks || 256;
+  // In-memory overlay of explicit per-block edits made by players or mods.
+  // Key: "x,y,z" -> value: blockType (0 = explicit deletion). Presence of a key means an override.
+  // This prevents the simplistic column-top base terrain from clobbering player-built blocks.
+  this.edits = new Map();
 
     // Load or initialize metadata
     const meta = this.storage.readMeta();
@@ -173,6 +177,21 @@ class World {
     };
 
     const chunkCoords = spiralChunks(minX, maxX, minZ, maxZ, centerChunkX, centerChunkZ);
+
+    // First, include any explicit edits (overrides) in the area
+    for (const [k, v] of this.edits.entries()) {
+      const [ex, ey, ez] = k.split(',').map(Number);
+      const dx = ex - centerX;
+      const dy = ey - centerY;
+      const dz = ez - centerZ;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist <= range) {
+        if (v !== 0) blocks.push({ x: ex, y: ey, z: ez, type: v });
+        // if v === 0, explicit deletion, do not include
+      }
+    }
+
+    // Then generate base blocks, skipping positions that have an edit override
     for (const [cx, cz] of chunkCoords) {
       const buffer = this.loadChunk(cx, cz);
       if (!buffer) continue;
@@ -186,6 +205,9 @@ class World {
             const worldZ = cz * CHUNK_SIZE + z;
             // generate blocks from y=0 to y=top-1 and determine their type by layer
             for (let y = 0; y < top; y++) {
+              const key = `${worldX},${y},${worldZ}`;
+              // overlay edits override base blocks
+              if (this.edits.has(key)) continue;
               const dx = worldX - centerX;
               const dy = y - centerY;
               const dz = worldZ - centerZ;
@@ -234,6 +256,15 @@ class World {
       processBuffer(cx, cz, entry.data);
     }
 
+    // Include explicit edits that may fall outside cached / disk chunks
+    for (const [k, v] of this.edits.entries()) {
+      if (!k) continue;
+      const [ex, ey, ez] = k.split(',').map(Number);
+      if (typeof ex !== 'number' || typeof ey !== 'number' || typeof ez !== 'number') continue;
+      if (v && v !== 0) blocks.push({ x: ex, y: ey, z: ez, type: v });
+      // if v === 0 this is an explicit deletion and should not be included
+    }
+
     // Also process chunk files on disk that aren't cached
     const fs = require('fs');
     const chunksDir = require('path').join(this.rootPath, 'chunks');
@@ -261,41 +292,29 @@ class World {
 
   // Set a single block in the world (simple column-top model)
   setBlock(x, y, z, blockType) {
-    // compute chunk coords
-    const cx = Math.floor(x / CHUNK_SIZE);
-    const cz = Math.floor(z / CHUNK_SIZE);
-    const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-    const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-    const key = this._cacheKey(cx, cz);
-    let buffer = null;
-    if (this.chunkCache.has(key)) {
-      buffer = this.chunkCache.get(key).data;
-    } else {
-      const raw = this.storage.readChunk(cx, cz);
-      if (raw) buffer = Uint8Array.from(raw);
-      else buffer = this.generateChunk(cx, cz);
-      this.chunkCache.set(key, { data: buffer, lastAccess: Date.now() });
-    }
-
-    const idx = lx * CHUNK_SIZE + lz;
-    const currentTop = buffer[idx];
-    if (blockType && blockType !== 0) {
-      // place block: ensure top >= y+1
-      if (y + 1 > currentTop) buffer[idx] = y + 1;
-    } else {
-      // remove block at (x,y,z): if y == top-1, need to reduce top
-      if (y === currentTop - 1) {
-        // naive scan downward to find new top (could be optimized)
-        let newTop = 0;
-        // In our simple model we don't track individual vertical blocks, so removing top clears entire column
-        // We'll set newTop = 0 for simplicity
-        newTop = 0;
-        buffer[idx] = newTop;
+    // Record explicit per-block edit in overlay map. This prevents the simplistic
+    // column-top base data from being mutated and subsequently regenerating
+    // the column as if the player never modified it.
+    const editKey = `${x},${y},${z}`;
+    try {
+      if (typeof blockType === 'number' && blockType !== 0) {
+        this.edits.set(editKey, blockType);
+      } else {
+        // blockType == 0 means explicit deletion; store 0 to indicate override
+        this.edits.set(editKey, 0);
       }
+    } catch (e) {
+      // fallback: do nothing on failure
     }
   }
 
   getBlock(x, y, z) {
+    const editKey = `${x},${y},${z}`;
+    if (this.edits.has(editKey)) {
+      const v = this.edits.get(editKey);
+      return v || 0;
+    }
+
     const cx = Math.floor(x / CHUNK_SIZE);
     const cz = Math.floor(z / CHUNK_SIZE);
     const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;

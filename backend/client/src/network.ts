@@ -52,6 +52,8 @@ export class NetworkManager {
   private blocksProcessingRunning: boolean = false;
   // Per-chunk version counters to trigger chunk rebuilds only when necessary
   private chunkVersions: Map<string, number> = new Map();
+  // Track last-applied server-sent chunk version per chunk key to avoid applying older updates
+  private lastAppliedServerChunkVersion: Map<string, number> = new Map();
   // Toggleable debug: set localStorage['vaste_debug_chunk_bumps'] = '1' to enable extra logs
   private debugChunkBumps: boolean = (() => {
     try {
@@ -202,6 +204,14 @@ export class NetworkManager {
                     const callback = (d: any) => {
                       const { seq, cx, cy, cz, version, indices, types } = d;
                       const chunkKey = `${cx},${cy},${cz}`;
+                      // If we've already applied a chunk with equal or newer server version, ignore this stale payload
+                      try {
+                        const last = this.lastAppliedServerChunkVersion.get(chunkKey);
+                        if (typeof version === 'number' && last != null && version <= last) {
+                          if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] Ignoring stale decoded chunk ${chunkKey} version=${version} <= last=${last}`);
+                          return;
+                        }
+                      } catch (e) {}
                       // Build a Map for this chunk only (local indices -> world coords)
                       const newChunkMap = new Map<string, any>();
                       const idxArr = indices as Uint16Array;
@@ -219,6 +229,11 @@ export class NetworkManager {
                         const key = getBlockKey(wx, wy, wz);
                         newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
                       }
+
+                      // Record applied server version for this chunk
+                      try {
+                        if (typeof version === 'number') this.lastAppliedServerChunkVersion.set(chunkKey, version);
+                      } catch (e) {}
 
                       // Stash the per-chunk map for later atomic swap (no per-block global map writes)
                       this.pendingChunkBlocks.set(chunkKey, newChunkMap);
@@ -306,6 +321,14 @@ export class NetworkManager {
                   const callback = (d: any) => {
                     const { seq, cx, cy, cz, version, indices, types } = d;
                     const chunkKey = `${cx},${cy},${cz}`;
+                    // If we've already applied a chunk with equal or newer server version, ignore this stale payload
+                    try {
+                      const last = this.lastAppliedServerChunkVersion.get(chunkKey);
+                      if (typeof version === 'number' && last != null && version <= last) {
+                        if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] Ignoring stale decoded chunk ${chunkKey} version=${version} <= last=${last}`);
+                        return;
+                      }
+                    } catch (e) {}
                     // Build a Map for this chunk only (local indices -> world coords)
                     const newChunkMap = new Map<string, any>();
                     const idxArr = indices as Uint16Array;
@@ -323,6 +346,11 @@ export class NetworkManager {
                       const key = getBlockKey(wx, wy, wz);
                       newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
                     }
+
+                    // Record applied server version for this chunk
+                    try {
+                      if (typeof version === 'number') this.lastAppliedServerChunkVersion.set(chunkKey, version);
+                    } catch (e) {}
 
                     // Stash the per-chunk map for later atomic swap (no per-block global map writes)
                     this.pendingChunkBlocks.set(chunkKey, newChunkMap);
