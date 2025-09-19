@@ -1,6 +1,7 @@
 // ChunkStore.js - typed-array backed chunk store for efficient iteration and memory
 const CHUNK_SIZE = 16;
 const VOXELS_PER_CHUNK = CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE; // 4096
+const DEFAULT_MAX_CHUNKS = 1024; // LRU cap (tunable)
 
 // Default flatground layering used for in-memory store to match persisted WorldRuntime
 const GRASS_LAYERS = 1;
@@ -70,10 +71,13 @@ class Chunk {
 }
 
 class ChunkStore {
-  constructor() {
+  constructor(options = {}) {
     this.chunks = new Map(); // key -> Chunk
     this.minBounds = { x: 0, y: 0, z: 0 };
     this.maxBounds = { x: CHUNK_SIZE, y: CHUNK_SIZE, z: CHUNK_SIZE };
+    this.lru = new Map(); // key -> timestamp (used for LRU eviction)
+    this.maxChunks = options.maxChunks || DEFAULT_MAX_CHUNKS;
+    this.workerPool = options.workerPool || null; // optional ChunkWorkerPool instance
   }
 
   worldToChunk(x, y, z) {
@@ -120,6 +124,7 @@ class ChunkStore {
         }
       }
       this.chunks.set(key, c);
+      this._markAccess(key);
       this.minBounds.x = Math.min(this.minBounds.x, baseX);
       this.minBounds.y = Math.min(this.minBounds.y, baseY);
       this.minBounds.z = Math.min(this.minBounds.z, baseZ);
@@ -128,6 +133,59 @@ class ChunkStore {
       this.maxBounds.z = Math.max(this.maxBounds.z, baseZ + CHUNK_SIZE);
     }
     return c;
+  }
+
+  // Async chunk generation using worker pool. Returns a Promise resolving to a Chunk-like object with blocks Uint16Array
+  ensureChunkAsync(cx, cy, cz) {
+    const key = chunkKey(cx, cy, cz);
+    const existing = this.chunks.get(key);
+    if (existing) {
+      this._markAccess(key);
+      return Promise.resolve(existing);
+    }
+    if (this.workerPool) {
+      return new Promise((resolve, reject) => {
+        this.workerPool.generateChunk(cx, cy, cz, (err, msg) => {
+          if (err) return reject(err);
+          if (msg && msg.error) return reject(new Error(msg.error));
+          try {
+            const buf = msg.blocksBuffer;
+            const u16 = new Uint16Array(buf);
+            const chunk = new Chunk(cx, cy, cz);
+            chunk.blocks = u16;
+            // compute nonEmptyCount
+            let cnt = 0;
+            for (let i = 0; i < u16.length; i++) if (u16[i] !== 0) cnt++;
+            chunk.nonEmptyCount = cnt;
+            this.chunks.set(key, chunk);
+            this._markAccess(key);
+            this._evictIfNeeded();
+            resolve(chunk);
+          } catch (e) {
+            reject(e);
+          }
+        });
+      });
+    }
+    // fallback to synchronous ensureChunk
+    return Promise.resolve(this.ensureChunk(cx, cy, cz));
+  }
+
+  _markAccess(key) {
+    this.lru.set(key, Date.now());
+  }
+
+  _evictIfNeeded() {
+    if (this.chunks.size <= this.maxChunks) return;
+    // Evict least-recently used until below threshold
+    const entries = Array.from(this.lru.entries());
+    entries.sort((a, b) => a[1] - b[1]);
+    const toRemove = Math.max(1, Math.floor(this.maxChunks * 0.1));
+    for (let i = 0; i < toRemove && this.chunks.size > this.maxChunks; i++) {
+      const key = entries[i][0];
+      this.chunks.delete(key);
+      this.lru.delete(key);
+    }
   }
 
   setBlock(x, y, z, blockType) {

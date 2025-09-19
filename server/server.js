@@ -263,7 +263,8 @@ class GameServer {
         this.world = null;
         // Backwards-compatible option to create the in-memory ChunkStore if explicitly requested
         if (options && options.defaultWorld === 'chunkstore') {
-            this.world = new ChunkStore();
+            this._chunkWorkerPool = new ChunkWorkerPool(options.workerPoolSize || undefined);
+            this.world = new ChunkStore({ workerPool: this._chunkWorkerPool, maxChunks: options.maxChunks || undefined });
             log('Created default in-memory ChunkStore because options.defaultWorld=chunkstore');
         }
         this._nextChunkSequence = 1; // global incrementing sequence for chunk messages
@@ -360,7 +361,7 @@ class GameServer {
         }
     }
 
-    initializeAuthenticatedPlayer(ws, user) {
+    async initializeAuthenticatedPlayer(ws, user) {
         // Initialize player with authenticated user data
         const player = {
             id: user.id,
@@ -396,69 +397,42 @@ class GameServer {
 
         const worldSize = this.world ? this.world.getWorldSize() : (modWorldState && modWorldState.worldSize ? modWorldState.worldSize : null);
         
-        // Only send blocks near the player's spawn position for initial load
-        const playerChunkX = Math.floor(player.x / 16);
-        const playerChunkY = Math.floor(player.y / 16);
-        const playerChunkZ = Math.floor(player.z / 16);
-        const renderDistance = 4; // Same as client render distance
+                // Only send chunks near the player's spawn position for initial load
+                const playerChunkX = Math.floor(player.x / 16);
+                const playerChunkY = Math.floor(player.y / 16);
+                const playerChunkZ = Math.floor(player.z / 16);
+                const renderDistance = 4; // in chunks; same as client default
 
-                // Ensure chunks around spawn are generated so we have initial world data to send
+                // Ensure nearby chunks are generated asynchronously using worker pool when available
+                const ensurePromises = [];
                 for (let dx = -renderDistance; dx <= renderDistance; dx++) {
                     for (let dy = -renderDistance; dy <= renderDistance; dy++) {
                         for (let dz = -renderDistance; dz <= renderDistance; dz++) {
-                            try { this.world.ensureChunk(playerChunkX + dx, playerChunkY + dy, playerChunkZ + dz); } catch (e) {}
+                            try {
+                                ensurePromises.push(this.world.ensureChunkAsync(playerChunkX + dx, playerChunkY + dy, playerChunkZ + dz));
+                            } catch (e) {}
                         }
                     }
                 }
 
-                const nearbyBlocks = this.getBlocksInRange(
-                        player.x, player.y, player.z,
-                        renderDistance * 16 // Convert chunk distance to block distance
-                );
+                // Wait briefly for generation to complete so the first chunks appear instantly
+                try { await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, 600))]); } catch (e) {}
 
-        // Prefer freshly-generated nearby blocks (from the active world) when available.
-        // Some persisted worlds expose a mod-provided worldState that contains a full
-        // blocks array (e.g. for in-memory ChunkStore). However, persisted World
-        // instances may report an empty blocks array until chunks are loaded on demand.
-        // In that case prefer the dynamic nearbyBlocks we just generated so the player
-        // doesn't receive an empty initial world on first connection.
-        let worldState = null;
-        if (modWorldState && Array.isArray(modWorldState.blocks) && modWorldState.blocks.length > 0) {
-            worldState = modWorldState;
-            this.log(`Using mod-provided worldState for initial send (blocks=${modWorldState.blocks.length})`);
-        } else if (Array.isArray(nearbyBlocks) && nearbyBlocks.length > 0) {
-            worldState = { blocks: nearbyBlocks, worldSize: worldSize };
-            this.log(`Using dynamically generated nearby blocks for initial send (blocks=${nearbyBlocks.length})`);
-        } else if (modWorldState) {
-            // fallback to modWorldState even if empty (preserve any provided worldSize/spawn)
-            worldState = modWorldState;
-            this.log(`Mod-provided worldState present but empty; sending it (blocks=0)`);
-        } else {
-            worldState = { blocks: nearbyBlocks, worldSize: worldSize };
-        }
+            // Enqueue binary chunk payloads for the nearby chunks (client will apply atomically)
+            log(`Preparing to send nearby chunks to ${user.username} around chunk ${playerChunkX},${playerChunkY},${playerChunkZ}`);
+            this.sendNearbyBlocks(user.id, player.x, player.y, player.z, true);
 
-        // Send initial world state with only nearby blocks
-        // Send initial blocks in small batches to avoid freezing client when processing large arrays
-        const blocksArray = Array.isArray(worldState.blocks) ? worldState.blocks : [];
-        log(`Preparing to send world_init to ${user.username} with ${blocksArray.length} blocks (will be batched)`);
-        if (!Array.isArray(blocksArray) || blocksArray.length === 0) {
-            // send an explicit empty world_init so the client receives worldSize/spawn even when
-            // no blocks are available yet (prevents client showing default tiny world)
-            this.sendToPlayer(user.id, { type: 'world_init', playerId: user.id, worldSize: worldState.worldSize, blocks: [] });
-        } else {
-            this.sendBlocksInBatches(user.id, blocksArray, 'world_init', { playerId: user.id, worldSize: worldState.worldSize });
-        }
-
-        // Initialize per-player chunk send queue and outstanding map to implement sliding-window
-        // outstandingChunks: Map<chunkKey, { buffer: ArrayBuffer, lastSent: number, retries: number }>
-        player.sendQueue = []; // array of {chunkKey, buffer}
-        player.outstandingChunks = new Map();
-        player.maxOutstanding = 8; // tuneable: how many chunk buffers can be outstanding per client
-        player.sending = false;
-    // When restoring state, don't aggressively resend until client tells us what it already has
-    player._awaitingHave = true;
-    // telemetry for tuning and monitoring
-    player._telemetry = { sent: 0, resent: 0, dropped: 0 };
+                // outstandingChunks: Map<chunkKey, { buffer: ArrayBuffer, lastSent: number, retries: number }>
+                player.sendQueue = []; // array of {chunkKey, buffer}
+                player.outstandingChunks = new Map();
+                player.maxOutstanding = 8; // tuneable: how many chunk buffers can be outstanding per client
+                player.sending = false;
+                // When restoring state, don't aggressively resend until client tells us what it already has
+                player._awaitingHave = true;
+                // telemetry for tuning and monitoring
+                player._telemetry = { sent: 0, resent: 0, dropped: 0 };
+                // Track which chunk coordinates are currently loaded for this player (string keys)
+                player.loadedChunks = new Set();
 
         // Restore persisted client state (if any)
         try {
@@ -583,33 +557,38 @@ class GameServer {
                     } else if (authenticatedUser && message && message.type && message.type !== 'auth_info') {
                         // acknowledge chunk receipt from client
                         if (message.type === 'chunk_ack' && (message.chunkKey || message.seq != null)) {
-                                const player = this.players.get(authenticatedUser.id);
-                                                            if (player && player.outstandingChunks) {
-                                                                    if (message.chunkKey && player.outstandingChunks.has(message.chunkKey)) {
-                                                                        player.outstandingChunks.delete(message.chunkKey);
-                                                                    } else if (message.seq != null) {
-                                                                        // find outstanding entry by seq suffix if stored in key
-                                                                        const seq = Number(message.seq);
-                                                                        for (const k of Array.from(player.outstandingChunks.keys())) {
-                                                                            if (k.endsWith(':' + seq)) {
-                                                                                player.outstandingChunks.delete(k);
-                                                                                break;
+                                    const player = this.players.get(authenticatedUser.id);
+                                                                if (player && player.outstandingChunks) {
+                                                                        if (message.chunkKey && player.outstandingChunks.has(message.chunkKey)) {
+                                                                            player.outstandingChunks.delete(message.chunkKey);
+                                                                        } else if (message.seq != null) {
+                                                                            // find outstanding entry by seq suffix if stored in key
+                                                                            const seq = Number(message.seq);
+                                                                            for (const k of Array.from(player.outstandingChunks.keys())) {
+                                                                                if (k.endsWith(':' + seq)) {
+                                                                                    player.outstandingChunks.delete(k);
+                                                                                    break;
+                                                                                }
                                                                             }
                                                                         }
-                                                                    }
-                                                                                                // persist client state (store shaped objects)
-                                                                                                try { clientStateManager.saveState(authenticatedUser.id, {
-                                                                                                    outstanding: Array.from(player.outstandingChunks.entries()).map(([k, m]) => ({ chunkKey: k, seq: m.seq || (k.split(':').pop() || 0), retries: m.retries || 0, nextBackoffMs: m.nextBackoffMs || ((this.options && this.options.chunkAckTimeoutMs) || CHUNK_ACK_TIMEOUT_MS) })),
-                                                                                                    sendQueue: player.sendQueue.map(i => i.chunkKey)
-                                                                                                }); } catch (e) {}
-                                                                    // if no more outstanding, clear resend interval
-                                                                    if (player.outstandingChunks.size === 0 && player._resendInterval) {
-                                                                        clearInterval(player._resendInterval);
-                                                                        player._resendInterval = null;
-                                                                    }
-                                                                                // attempt to send more if possible
-                                                                                try { this._processPlayerSendQueue(authenticatedUser.id); } catch (e) {}
-                                                            }
+                                                                        // Mark chunk as loaded for this player (so we can manage unloads)
+                                                                        try {
+                                                                            const ck = message.chunkKey ? String(message.chunkKey).split(':')[0] : null;
+                                                                            if (ck && player.loadedChunks) player.loadedChunks.add(ck);
+                                                                        } catch (e) {}
+                                                                                                    // persist client state (store shaped objects)
+                                                                                                    try { clientStateManager.saveState(authenticatedUser.id, {
+                                                                                                        outstanding: Array.from(player.outstandingChunks.entries()).map(([k, m]) => ({ chunkKey: k, seq: m.seq || (k.split(':').pop() || 0), retries: m.retries || 0, nextBackoffMs: m.nextBackoffMs || ((this.options && this.options.chunkAckTimeoutMs) || CHUNK_ACK_TIMEOUT_MS) })),
+                                                                                                        sendQueue: player.sendQueue.map(i => i.chunkKey)
+                                                                                                    }); } catch (e) {}
+                                                                        // if no more outstanding, clear resend interval
+                                                                        if (player.outstandingChunks.size === 0 && player._resendInterval) {
+                                                                            clearInterval(player._resendInterval);
+                                                                            player._resendInterval = null;
+                                                                        }
+                                                                                    // attempt to send more if possible
+                                                                                    try { this._processPlayerSendQueue(authenticatedUser.id); } catch (e) {}
+                                                                }
                         } else {
                             this.handleMessage(authenticatedUser.id, message);
                         }
@@ -778,16 +757,8 @@ class GameServer {
             });
         }
 
-        // Broadcast block update (include actionId for correlation)
-        this.broadcastToAll({
-            type: 'block_update',
-            action: 'break',
-            x: x,
-            y: y,
-            z: z,
-            blockType: 0,
-            actionId: actionId
-        });
+        // Broadcast a minimal block_patch to nearby players (server authoritative)
+        this.broadcastBlockPatch({ x, y, z, type: 0, actionId }, playerId);
     }
 
     handlePlaceBlock(playerId, message) {
@@ -825,16 +796,27 @@ class GameServer {
             });
         }
 
-        // Broadcast block update (include actionId for correlation)
-        this.broadcastToAll({
-            type: 'block_update',
-            action: 'place',
-            x: x,
-            y: y,
-            z: z,
-            blockType: blockType,
-            actionId: actionId
-        });
+        // Broadcast a minimal block_patch to nearby players (server authoritative)
+        this.broadcastBlockPatch({ x, y, z, type: blockType, actionId }, playerId);
+    }
+
+    // Broadcast a small block patch (single or batched) to nearby players only
+    broadcastBlockPatch(patchItem, sourcePlayerId) {
+        // patchItem: { x, y, z, type, actionId }
+        const radius = 128; // broadcast radius in blocks (tunable)
+        const px = patchItem.x, py = patchItem.y, pz = patchItem.z;
+        for (const [id, player] of this.players) {
+            if (!player || !player.ws || player.ws.readyState !== WebSocket.OPEN) continue;
+            // send to all players; optimize by distance from change
+            const dx = player.x - px; const dy = player.y - py; const dz = player.z - pz;
+            const dist2 = dx*dx + dy*dy + dz*dz;
+            if (dist2 <= radius*radius) {
+                // send minimal delta packet
+                try {
+                    player.ws.send(JSON.stringify({ type: 'block_patch', patches: [patchItem] }));
+                } catch (e) {}
+            }
+        }
     }
 
     updatePlayerPosition(playerId, x, y, z) {
@@ -895,9 +877,9 @@ class GameServer {
         return this.world.getBlocksInRange(centerX, centerY, centerZ, range);
     }
 
-    sendNearbyBlocks(playerId, playerX, playerY, playerZ) {
+    async sendNearbyBlocks(playerId, playerX, playerY, playerZ, initial = false) {
         // Send chunk-based binary payloads (CHUNK_INIT) for nearby chunks
-        const renderDistanceChunks = 10;
+        const renderDistanceChunks = 4; // use a moderate default render distance (in chunks)
         const pcx = Math.floor(playerX / 16);
         const pcy = Math.floor(playerY / 16);
         const pcz = Math.floor(playerZ / 16);
@@ -908,6 +890,18 @@ class GameServer {
             log('sendNearbyBlocks called but no active world present; skipping chunk sending');
             return; // Early return to skip chunk iteration
         }
+        // If the world implementation doesn't expose a chunk map (e.g., mod-provided world), fall back
+        if (!this.world.chunks || typeof this.world.chunks.get !== 'function') {
+            // fallback: send nearby blocks via existing batched JSON path
+            const blocks = this.getBlocksInRange(playerX, playerY, playerZ, renderDistanceChunks * 16);
+            if (initial) {
+                this.sendBlocksInBatches(playerId, blocks, 'world_init', { playerId: playerId, worldSize: this.world.getWorldSize ? this.world.getWorldSize() : null });
+            } else {
+                this.sendBlocksInBatches(playerId, blocks, 'chunks_update', {});
+            }
+            return;
+        }
+        const ensurePromises = [];
         for (let dx = -renderDistanceChunks; dx <= renderDistanceChunks; dx++) {
             for (let dy = -renderDistanceChunks; dy <= renderDistanceChunks; dy++) {
                 for (let dz = -renderDistanceChunks; dz <= renderDistanceChunks; dz++) {
@@ -915,31 +909,42 @@ class GameServer {
                     const cy = pcy + dy;
                     const cz = pcz + dz;
                     const key = `${cx},${cy},${cz}`;
-                    const chunk = this.world.chunks.get(key);
-                    if (!chunk) continue;
                     // simple distance check by chunk center
                     const centerX = cx * 16 + 8;
                     const centerY = cy * 16 + 8;
                     const centerZ = cz * 16 + 8;
                     const dist = Math.sqrt((centerX - playerX)**2 + (centerY - playerY)**2 + (centerZ - playerZ)**2);
                     if (dist <= renderDistanceChunks * 16 + 8) {
-                        chunksToSend.push(chunk);
+                        const chunk = this.world.chunks.get(key);
+                        if (chunk) {
+                            chunksToSend.push({ cx, cy, cz, chunk });
+                        } else if (this.world.ensureChunkAsync) {
+                            // schedule async generation
+                            ensurePromises.push(this.world.ensureChunkAsync(cx, cy, cz).then(c => ({ cx, cy, cz, chunk: c })).catch(() => null));
+                        }
                     }
                 }
             }
         }
 
+        // wait briefly for async-generated chunks to complete (non-blocking long wait)
+        if (ensurePromises.length > 0) {
+            try {
+                const results = await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, 400))]);
+                if (Array.isArray(results)) {
+                    for (const r of results) if (r && r.chunk) chunksToSend.push(r);
+                }
+            } catch (e) {}
+        }
+
         const player = this.players.get(playerId);
         if (!player || !player.ws || player.ws.readyState !== WebSocket.OPEN) return;
 
-        // send each chunk as a binary CHUNK_INIT message
+        // send each chunk as a binary CHUNK_FULL message (serialized & possibly compressed)
         const { serializeChunk } = require('./world/chunkSerializer');
-        // enqueue buffers
         for (const chunk of chunksToSend) {
             try {
-                // assign a sequence number for reliable tracking
                 const seq = this._nextChunkSequence++;
-                // attach temporarily to chunk for serialization
                 const chunkCopy = Object.assign({}, chunk);
                 chunkCopy.__seq = seq;
                 const buffer = serializeChunk(chunkCopy);

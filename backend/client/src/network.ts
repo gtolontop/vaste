@@ -129,18 +129,48 @@ export class NetworkManager {
                 const dv = new DataView(ab);
                 let off = 0;
                 const msgType = dv.getUint8(off); off += 1;
-                if (msgType === 1) { // CHUNK_INIT
+                if (msgType === 1) { // CHUNK_FULL (new compact full-chunk format)
                   const seq = dv.getUint32(off, true); off += 4;
                   const cx = dv.getInt32(off, true); off += 4;
                   const cy = dv.getInt32(off, true); off += 4;
                   const cz = dv.getInt32(off, true); off += 4;
                   const version = dv.getInt32(off, true); off += 4;
-                  const entryCount = dv.getUint16(off, true); off += 2;
-                  const blocks: any[] = [];
-                  for (let i = 0; i < entryCount; i++) {
-                    const idx = dv.getUint16(off, true); off += 2;
-                    const type = dv.getUint16(off, true); off += 2;
-                    // compute local x,y,z from idx (same ordering as server)
+                  const compressionMode = dv.getUint8(off); off += 1;
+                  const payloadLen = dv.getUint32(off, true); off += 4;
+                  const payload = new Uint8Array(ab, off, payloadLen);
+
+                  // decode into a Uint16Array of length 16^3
+                  const VOXELS = 16 * 16 * 16;
+                  let blocksU16 = new Uint16Array(VOXELS);
+                  if (compressionMode === 0) {
+                    // raw: payload is little-endian Uint16 array
+                    if (payload.byteLength >= VOXELS * 2) {
+                      blocksU16 = new Uint16Array(payload.buffer, payload.byteOffset, VOXELS);
+                    } else {
+                      // malformed: fall back to zeros
+                      blocksU16 = new Uint16Array(VOXELS);
+                    }
+                  } else if (compressionMode === 1) {
+                    // RLE decode: pairs of uint16 runLength, uint16 value
+                    const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+                    let pos = 0;
+                    let outIdx = 0;
+                    while (pos + 4 <= payload.byteLength && outIdx < VOXELS) {
+                      const run = view.getUint16(pos, true); pos += 2;
+                      const val = view.getUint16(pos, true); pos += 2;
+                      for (let r = 0; r < run && outIdx < VOXELS; r++) {
+                        blocksU16[outIdx++] = val;
+                      }
+                    }
+                    // if we didn't fill entire chunk, remaining values are zeros
+                  }
+
+                  // Apply the full chunk atomically: build a chunk map and replace client's chunk entry
+                  const chunkKey = `${cx},${cy},${cz}`;
+                  const newChunkMap = new Map<string, any>();
+                  for (let idx = 0; idx < blocksU16.length; idx++) {
+                    const t = blocksU16[idx];
+                    if (t === 0) continue;
                     const x = idx % 16;
                     const tmp = Math.floor(idx / 16);
                     const z = tmp % 16;
@@ -148,15 +178,23 @@ export class NetworkManager {
                     const wx = cx * 16 + x;
                     const wy = cy * 16 + y;
                     const wz = cz * 16 + z;
-                    blocks.push({ x: wx, y: wy, z: wz, type });
+                    const key = getBlockKey(wx, wy, wz);
+                    newChunkMap.set(key, { x: wx, y: wy, z: wz, type: t });
+                    // Also update global blocks map for quick lookup
+                    this.gameState.blocks.set(key, { x: wx, y: wy, z: wz, type: t });
                   }
-                  // Enqueue blocks for processing (don't clear existing)
-                  this.enqueueBlocksForProcessing(blocks, { clearExisting: false });
-                    // Send ACK to server so it can slide its window
-                    // eslint-disable-next-line no-console
-                    console.log('[CLIENT] sending chunk_ack seq=', seq, ' for chunk', cx, cy, cz);
+
+                  // Replace the client's chunk map with the new one (atomic swap)
+                  this.gameState.chunks.set(chunkKey, newChunkMap);
+                  // bump chunk version and neighbors for mesh rebuilds
+                  const ver = this.chunkVersions.get(chunkKey) || 0;
+                  this.chunkVersions.set(chunkKey, ver + 1);
+                  this.bumpChunkAndFaceNeighbors(cx, cy, cz);
+                  this.gameState.chunkVersions = new Map(this.chunkVersions);
+
+                  // Send ACK to server so it can slide its window
                   try {
-                    const chunkKey = `${cx},${cy},${cz}:${version}:${seq}`;
+                    const ackKey = `${cx},${cy},${cz}:${version}:${seq}`;
                     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                       // persist applied seq
                       try {
@@ -167,11 +205,12 @@ export class NetworkManager {
                           localStorage.setItem('vaste_applied_chunk_seqs', JSON.stringify(set));
                         }
                       } catch (e) {}
-                      this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey, seq }));
+                      this.ws.send(JSON.stringify({ type: 'chunk_ack', chunkKey: ackKey, seq }));
                     }
-                  } catch (e) {
-                    // ignore
-                  }
+                  } catch (e) {}
+
+                  // Notify UI once per chunk for fast display
+                  this.onStateUpdate({ ...this.gameState });
                   return;
                 }
                 // Unknown binary message: ignore for now
