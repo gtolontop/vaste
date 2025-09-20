@@ -12,7 +12,7 @@ const meshWorkerPool = getDefaultMeshWorkerPool();
 // Global upload throttling queue to limit main-thread GPU uploads per frame.
 const UPLOAD_QUEUE: Array<() => void> = [];
 let uploadQueueScheduled = false;
-const MAX_UPLOADS_PER_FRAME = 3; // tuneable: number of geometry uploads allowed per rAF
+const MAX_UPLOADS_PER_FRAME = 5; // tuneable: number of geometry uploads allowed per rAF (recommend 2-5)
 
 function scheduleUploadQueue() {
   if (uploadQueueScheduled) return;
@@ -374,15 +374,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                             }
                           } catch (e) {}
                           prevGeometryRef.current = null;
-                          // Log timings: mesh worker time and main-thread upload/display time (always)
-                          try {
-                            const meshMs = (msg && msg.meshMs) ? msg.meshMs : 0;
-                            const uploadMs = Date.now() - uploadStart;
-                            const posCount = posArr.length / 3;
-                            const idxCount = idxArrRaw.length;
-                            // eslint-disable-next-line no-console
-                            console.log(`[CLIENT][TIMINGS] chunk ${jobId} meshMs=${meshMs} mainUploadMs=${uploadMs}ms pos=${posCount} idx=${idxCount}`);
-                          } catch (e) {}
                         });
                       } else {
                         setTimeout(() => {
@@ -394,15 +385,6 @@ const OptimizedChunk: React.FC<ChunkProps> = ({ chunkMap, version, chunkX, chunk
                             }
                           } catch (e) {}
                           prevGeometryRef.current = null;
-                          // Log timings for non-rAF fallback (always)
-                          try {
-                            const meshMs = (msg && msg.meshMs) ? msg.meshMs : 0;
-                            const uploadMs = Date.now() - uploadStart;
-                            const posCount = posArr.length / 3;
-                            const idxCount = idxArrRaw.length;
-                            // eslint-disable-next-line no-console
-                            console.log(`[CLIENT][TIMINGS] chunk ${jobId} meshMs=${meshMs} mainUploadMs=${uploadMs}ms pos=${posCount} idx=${idxCount}`);
-                          } catch (e) {}
                         }, 16);
                       }
                     } catch (e) {}

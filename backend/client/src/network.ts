@@ -171,15 +171,6 @@ export class NetworkManager {
                         try {
                           const postedAt = this._chunkBufferTimes.get(key as number);
                           if (postedAt != null) {
-                            const now = Date.now();
-                            const transferPlusDecodeMs = now - postedAt;
-                            const decodeMs = d.decodeMs != null ? d.decodeMs : 0;
-                            try {
-                              // eslint-disable-next-line no-console
-                              console.log(`[CLIENT][TIMINGS] chunk ${d.cx},${d.cy},${d.cz} seq=${d.seq} requestId=${d.requestId} transfer+decode=${transferPlusDecodeMs}ms decodeMs=${decodeMs}ms`);
-                            } catch (e) {
-                              /* ignore console errors */
-                            }
                             this._chunkBufferTimes.delete(key as number);
                           }
                         } catch (e) {
@@ -626,7 +617,7 @@ export class NetworkManager {
 
   // Process queued block arrays in small batches per animation frame
   private processBlocksQueue() {
-    const BATCH_PER_FRAME = 512; // tuneable: number of blocks processed per frame
+    const BATCH_PER_FRAME = 8192; // tuneable: number of blocks processed per frame (recommend 2048-8192)
 
     const processNextItem = () => {
       const item = this.blocksProcessingQueue.shift();
