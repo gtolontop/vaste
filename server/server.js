@@ -14,10 +14,18 @@ const PORT = process.env.PORT || 25565;
 const CHUNK_ACK_TIMEOUT_MS = 5000; // default resend if not acked within 5s
 const CHUNK_MAX_RETRIES = 5; // default max retries before drop
 
+// Server render distance default (in chunks) - can be overridden via server-config.json (render_distance_chunks)
+const DEFAULT_SERVER_RENDER_DISTANCE = 12; // reasonable default between 10 and 16
+const MIN_SERVER_RENDER_DISTANCE = 4;
+const MAX_SERVER_RENDER_DISTANCE = 32;
+
 // Batch sizing (in bytes) for chunk envelopes
 const DEFAULT_MAX_BATCH_BYTES = 256 * 1024; // 256 KB default target per envelope
 const MIN_BATCH_BYTES = 16 * 1024; // 16 KB minimum target
 const MAX_BATCH_BYTES = 1024 * 1024; // 1 MB maximum target
+
+// Initial chunk generation wait (ms) for sending nearby chunks. Tunable via server-config.json.initial_chunk_generation_wait_ms
+const DEFAULT_INITIAL_CHUNK_WAIT_MS = 1200;
 
 
 // Logging utility
@@ -304,6 +312,17 @@ class GameServer {
     // Initialize modding system lazily; in headless mode we may skip mod loading
     this.modSystem = new VasteModSystem(this);
 
+    // Configure server-wide render distance (chunks). Prefer server-config override if present.
+    try {
+      const cfg = SERVER_CONFIG && Number(SERVER_CONFIG.render_distance_chunks);
+      let rd = Number.isFinite(cfg) && cfg ? Math.floor(cfg) : DEFAULT_SERVER_RENDER_DISTANCE;
+      rd = Math.max(MIN_SERVER_RENDER_DISTANCE, Math.min(MAX_SERVER_RENDER_DISTANCE, rd));
+      this.serverRenderDistanceChunks = rd;
+      log(`Configured server render distance (chunks): ${this.serverRenderDistanceChunks}`);
+    } catch (e) {
+      this.serverRenderDistanceChunks = DEFAULT_SERVER_RENDER_DISTANCE;
+    }
+
     // In headless/test mode we avoid creating the WebSocket server to prevent port binding
     if (!this.options.headless) {
       this.wss = new WebSocket.Server({ port: PORT });
@@ -441,7 +460,7 @@ class GameServer {
     const playerChunkX = Math.floor(player.x / 16);
     const playerChunkY = Math.floor(player.y / 16);
     const playerChunkZ = Math.floor(player.z / 16);
-    const renderDistance = 16; // tuneable: in chunks; same as client default
+  const renderDistance = this.serverRenderDistanceChunks || 16; // tuneable: in chunks; configured server-wide
 
     // Ensure nearby chunks are generated asynchronously using worker pool when available
     const ensurePromises = [];
@@ -457,11 +476,12 @@ class GameServer {
 
     // Wait briefly for generation to complete so the first chunks appear instantly
     try {
-      await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, 600))]);
+      const waitMs = (SERVER_CONFIG && Number(SERVER_CONFIG.initial_chunk_generation_wait_ms)) || DEFAULT_INITIAL_CHUNK_WAIT_MS;
+      await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, waitMs))]);
     } catch (e) {}
 
-    // Enqueue binary chunk payloads for the nearby chunks (client will apply atomically)
-    log(`Preparing to send nearby chunks to ${user.username} around chunk ${playerChunkX},${playerChunkY},${playerChunkZ}`);
+  // Enqueue binary chunk payloads for the nearby chunks (client will apply atomically)
+  log(`Preparing to send nearby chunks to ${user.username} around chunk ${playerChunkX},${playerChunkY},${playerChunkZ}`);
     this.sendNearbyBlocks(user.id, player.x, player.y, player.z, true);
 
     // Restore persisted client state (if any)
@@ -939,7 +959,7 @@ class GameServer {
 
   async sendNearbyBlocks(playerId, playerX, playerY, playerZ, initial = false) {
     // Send chunk-based binary payloads (CHUNK_INIT) for nearby chunks
-    const renderDistanceChunks = 4; // use a moderate default render distance (in chunks)
+  const renderDistanceChunks = this.serverRenderDistanceChunks || 4; // configured server-wide
     const pcx = Math.floor(playerX / 16);
     const pcy = Math.floor(playerY / 16);
     const pcz = Math.floor(playerZ / 16);
@@ -1001,6 +1021,11 @@ class GameServer {
         }
       } catch (e) {}
     }
+
+    // Log diagnostic: how many chunks we're considering and how many are present
+    try {
+      log(`sendNearbyBlocks: player=${playerId} considered=${(renderDistanceChunks * 2 + 1) ** 3} found=${chunksToSend.length} (pcx=${pcx},pcy=${pcy},pcz=${pcz})`);
+    } catch (e) {}
 
     const player = this.players.get(playerId);
     if (!player || !player.ws || player.ws.readyState !== WebSocket.OPEN) return;
