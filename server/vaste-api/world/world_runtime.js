@@ -290,6 +290,72 @@ class World {
     return blocks;
   }
 
+  // Return chunk-aligned chunks within a chunk-radius around a center (block coords)
+  // rangeChunks is number of chunks (radius) to include
+  getChunksInRange(centerX, centerY, centerZ, rangeChunks) {
+    const out = [];
+    if (!Number.isFinite(rangeChunks)) return out;
+  const cx0 = Math.floor(centerX / CHUNK_SIZE);
+  const cy0 = Math.floor(centerY / CHUNK_SIZE);
+  const cz0 = Math.floor(centerZ / CHUNK_SIZE);
+    const minCx = cx0 - rangeChunks;
+    const maxCx = cx0 + rangeChunks;
+  const minCy = cy0 - rangeChunks;
+  const maxCy = cy0 + rangeChunks;
+    const minCz = cz0 - rangeChunks;
+    const maxCz = cz0 + rangeChunks;
+
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cz = minCz; cz <= maxCz; cz++) {
+        // Load or generate chunk metadata (column tops)
+        const buffer = this.loadChunk(cx, cz);
+        if (!buffer) continue;
+
+        // For each vertical chunk layer in the requested vertical radius, synthesize a full chunk's blocks
+        for (let cy = minCy; cy <= maxCy; cy++) {
+          const chunkBlocks = new Uint16Array(CHUNK_SIZE * CHUNK_SIZE * CHUNK_SIZE);
+          const baseWorldY = cy * CHUNK_SIZE;
+          // buffer contains top per XZ (number of solid layers)
+          for (let x = 0; x < CHUNK_SIZE; x++) {
+            for (let z = 0; z < CHUNK_SIZE; z++) {
+              const idx = x * CHUNK_SIZE + z;
+              const top = buffer[idx];
+              // fill local y 0..15 corresponding to worldY = baseWorldY + y
+              for (let y = 0; y < CHUNK_SIZE; y++) {
+                const worldY = baseWorldY + y;
+                if (worldY < top) {
+                  const type = this._blockTypeForHeight(worldY, top);
+                  if (type !== 0) {
+                    const localIdx = y * CHUNK_SIZE * CHUNK_SIZE + z * CHUNK_SIZE + x;
+                    chunkBlocks[localIdx] = type;
+                  }
+                }
+              }
+            }
+            }
+
+            // Apply edits overlay within this chunk (only edits that fall into this chunk's bounds)
+            const baseX = cx * CHUNK_SIZE;
+          const baseZ = cz * CHUNK_SIZE;
+          for (const [k, v] of this.edits.entries()) {
+            if (!k) continue;
+            const [ex, ey, ez] = k.split(',').map(Number);
+            if (ex >= baseX && ex < baseX + CHUNK_SIZE && ez >= baseZ && ez < baseZ + CHUNK_SIZE && ey >= baseWorldY && ey < baseWorldY + CHUNK_SIZE) {
+              const lx = ex - baseX;
+              const ly = ey - baseWorldY;
+              const lz = ez - baseZ;
+              const localIdx = ly * CHUNK_SIZE * CHUNK_SIZE + lz * CHUNK_SIZE + lx;
+              chunkBlocks[localIdx] = v || 0;
+            }
+          }
+
+          out.push({ cx: cx, cy: cy, cz: cz, chunk: { cx, cy, cz, blocks: chunkBlocks, version: 1 } });
+        }
+      }
+    }
+    return out;
+  }
+
   // Set a single block in the world (simple column-top model)
   setBlock(x, y, z, blockType) {
     // Record explicit per-block edit in overlay map. This prevents the simplistic

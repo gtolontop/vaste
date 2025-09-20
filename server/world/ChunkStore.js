@@ -269,6 +269,35 @@ class ChunkStore {
     return blocks;
   }
 
+  // Return available chunks (not per-block) within a chunk-range radius around center (block coords)
+  // rangeChunks: number of chunks radius to include (in chunks), if caller passes range in blocks, convert accordingly
+  getChunksInRange(centerX, centerY, centerZ, rangeChunks) {
+    const out = [];
+    if (!Number.isFinite(rangeChunks)) return out;
+    const cx0 = Math.floor(centerX / CHUNK_SIZE);
+    const cy0 = Math.floor(centerY / CHUNK_SIZE);
+    const cz0 = Math.floor(centerZ / CHUNK_SIZE);
+    const minCx = cx0 - rangeChunks;
+    const maxCx = cx0 + rangeChunks;
+    const minCy = cy0 - rangeChunks;
+    const maxCy = cy0 + rangeChunks;
+    const minCz = cz0 - rangeChunks;
+    const maxCz = cz0 + rangeChunks;
+
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cy = minCy; cy <= maxCy; cy++) {
+        for (let cz = minCz; cz <= maxCz; cz++) {
+          const key = chunkKey(cx, cy, cz);
+          const chunk = this.chunks.get(key);
+          if (chunk) {
+            out.push({ cx, cy, cz, chunk });
+          }
+        }
+      }
+    }
+    return out;
+  }
+
   getBlocksArray() {
     const out = [];
     for (const [key, chunk] of this.chunks) {

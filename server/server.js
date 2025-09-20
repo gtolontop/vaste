@@ -15,9 +15,9 @@ const CHUNK_ACK_TIMEOUT_MS = 5000; // default resend if not acked within 5s
 const CHUNK_MAX_RETRIES = 5; // default max retries before drop
 
 // Server render distance default (in chunks) - can be overridden via server-config.json (render_distance_chunks)
-const DEFAULT_SERVER_RENDER_DISTANCE = 12; // reasonable default between 10 and 16
+const DEFAULT_SERVER_RENDER_DISTANCE = 4; // reasonable default between 10 and 16
 const MIN_SERVER_RENDER_DISTANCE = 4;
-const MAX_SERVER_RENDER_DISTANCE = 32;
+const MAX_SERVER_RENDER_DISTANCE = 4;
 
 // Batch sizing (in bytes) for chunk envelopes
 const DEFAULT_MAX_BATCH_BYTES = 256 * 1024; // 256 KB default target per envelope
@@ -667,9 +667,13 @@ class GameServer {
         }
       });
 
-      // Handle disconnection
-      ws.on("close", () => {
+      // Handle disconnection (log close code and reason)
+      ws.on("close", (code, reason) => {
         if (authTimeout) clearTimeout(authTimeout);
+        try {
+          const reasonStr = reason && reason.toString ? reason.toString() : String(reason);
+          log(`Connection closed (temp=${tempConnectionId.substring(0, 8)}) code=${code} reason=${reasonStr}`);
+        } catch (e) {}
 
         if (authenticatedUser) {
           // Get player data before removing
@@ -970,56 +974,84 @@ class GameServer {
       log("sendNearbyBlocks called but no active world present; skipping chunk sending");
       return; // Early return to skip chunk iteration
     }
-    // If the world implementation doesn't expose a chunk map (e.g., mod-provided world), fall back
+    // If the world implementation doesn't expose a chunk map (e.g., mod-provided world), prefer chunk-based API if available
     if (!this.world.chunks || typeof this.world.chunks.get !== "function") {
-      // fallback: send nearby blocks via existing batched JSON path
-      const blocks = this.getBlocksInRange(playerX, playerY, playerZ, renderDistanceChunks * 16);
-      if (initial) {
-        this.sendBlocksInBatches(playerId, blocks, "world_init", { playerId: playerId, worldSize: this.world.getWorldSize ? this.world.getWorldSize() : null });
+      if (typeof this.world.getChunksInRange === "function") {
+        // ask world for chunk-aligned data within render distance (in chunks)
+          try {
+            const chunkResults = this.world.getChunksInRange(playerX, playerY, playerZ, renderDistanceChunks) || [];
+            log(`getChunksInRange returned ${chunkResults.length} chunks for player ${playerId}`);
+            for (const r of chunkResults) {
+              // compute center distance for prioritization
+              const centerX = (r.cx * 16) + 8;
+              const centerY = (r.cy * 16) + 8;
+              const centerZ = (r.cz * 16) + 8;
+              const dist = Math.sqrt((centerX - playerX) ** 2 + (centerY - playerY) ** 2 + (centerZ - playerZ) ** 2);
+              // normalize chunk representation to expected shape {cx,cy,cz,chunk,dist}
+              chunksToSend.push({ cx: r.cx, cy: r.cy, cz: r.cz, chunk: r.chunk, dist });
+              try {
+                const hasBlocks = r.chunk && (r.chunk.blocks instanceof Uint16Array || (r.chunk.blocks && r.chunk.blocks.buffer));
+                log(`  chunk ${r.cx},${r.cy},${r.cz} hasBlocks=${hasBlocks}`);
+              } catch (e) {}
+            }
+        } catch (e) {
+          log(`getChunksInRange failed: ${e && e.message ? e.message : String(e)}`, "WARN");
+        }
+        // continue to serialization path below
       } else {
-        this.sendBlocksInBatches(playerId, blocks, "chunks_update", {});
+        // fallback to old per-block JSON batched path if chunk API not available
+        const blocks = this.getBlocksInRange(playerX, playerY, playerZ, renderDistanceChunks * 16);
+        if (initial) {
+          this.sendBlocksInBatches(playerId, blocks, "world_init", { playerId: playerId, worldSize: this.world.getWorldSize ? this.world.getWorldSize() : null });
+        } else {
+          this.sendBlocksInBatches(playerId, blocks, "chunks_update", {});
+        }
+        return;
       }
-      return;
     }
-    const ensurePromises = [];
-    for (let dx = -renderDistanceChunks; dx <= renderDistanceChunks; dx++) {
-      for (let dy = -renderDistanceChunks; dy <= renderDistanceChunks; dy++) {
-        for (let dz = -renderDistanceChunks; dz <= renderDistanceChunks; dz++) {
-          const cx = pcx + dx;
-          const cy = pcy + dy;
-          const cz = pcz + dz;
-          const key = `${cx},${cy},${cz}`;
-          // simple distance check by chunk center
-          const centerX = cx * 16 + 8;
-          const centerY = cy * 16 + 8;
-          const centerZ = cz * 16 + 8;
-          const dist = Math.sqrt((centerX - playerX) ** 2 + (centerY - playerY) ** 2 + (centerZ - playerZ) ** 2);
-          if (dist <= renderDistanceChunks * 16 + 8) {
-            const chunk = this.world.chunks.get(key);
-            if (chunk) {
-              chunksToSend.push({ cx, cy, cz, chunk, dist });
-            } else if (this.world.ensureChunkAsync) {
-              // schedule async generation
-              ensurePromises.push(
-                this.world
-                  .ensureChunkAsync(cx, cy, cz)
-                  .then((c) => ({ cx, cy, cz, chunk: c, dist }))
-                  .catch(() => null)
-              );
+    // If we used getChunksInRange above (world without a chunks Map), we already populated chunksToSend.
+    // Otherwise, run the chunk-map-based iteration and async ensures.
+    if (this.world.chunks && typeof this.world.chunks.get === "function") {
+      const ensurePromises = [];
+      for (let dx = -renderDistanceChunks; dx <= renderDistanceChunks; dx++) {
+        for (let dy = -renderDistanceChunks; dy <= renderDistanceChunks; dy++) {
+          for (let dz = -renderDistanceChunks; dz <= renderDistanceChunks; dz++) {
+            const cx = pcx + dx;
+            const cy = pcy + dy;
+            const cz = pcz + dz;
+            const key = `${cx},${cy},${cz}`;
+            // simple distance check by chunk center
+            const centerX = cx * 16 + 8;
+            const centerY = cy * 16 + 8;
+            const centerZ = cz * 16 + 8;
+            const dist = Math.sqrt((centerX - playerX) ** 2 + (centerY - playerY) ** 2 + (centerZ - playerZ) ** 2);
+            if (dist <= renderDistanceChunks * 16 + 8) {
+              const chunk = this.world.chunks.get(key);
+              if (chunk) {
+                chunksToSend.push({ cx, cy, cz, chunk, dist });
+              } else if (this.world.ensureChunkAsync) {
+                // schedule async generation
+                ensurePromises.push(
+                  this.world
+                    .ensureChunkAsync(cx, cy, cz)
+                    .then((c) => ({ cx, cy, cz, chunk: c, dist }))
+                    .catch(() => null)
+                );
+              }
             }
           }
         }
       }
-    }
 
-    // wait briefly for async-generated chunks to complete (non-blocking long wait)
-    if (ensurePromises.length > 0) {
-      try {
-        const results = await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, 400))]);
-        if (Array.isArray(results)) {
-          for (const r of results) if (r && r.chunk) chunksToSend.push(r);
-        }
-      } catch (e) {}
+      // wait briefly for async-generated chunks to complete (non-blocking long wait)
+      if (ensurePromises.length > 0) {
+        try {
+          const results = await Promise.race([Promise.all(ensurePromises), new Promise((res) => setTimeout(res, 400))]);
+          if (Array.isArray(results)) {
+            for (const r of results) if (r && r.chunk) chunksToSend.push(r);
+          }
+        } catch (e) {}
+      }
     }
 
     // Log diagnostic: how many chunks we're considering and how many are present
@@ -1035,9 +1067,11 @@ class GameServer {
     chunksToSend.sort((a, b) => (a.dist || 0) - (b.dist || 0));
     const toSerialize = chunksToSend.map((c) => {
       const seq = this._nextChunkSequence++;
-      const chunkCopy = Object.assign({}, c);
-      chunkCopy.__seq = seq;
-      return { cx: c.cx, cy: c.cy, cz: c.cz, chunk: chunkCopy, seq };
+      // serializer expects the actual chunk object (with .blocks) not a wrapper
+      const inner = c.chunk || {};
+      // stamp sequence onto the inner chunk so serializer can include it in header
+      try { inner.__seq = seq; } catch (e) {}
+      return { cx: c.cx, cy: c.cy, cz: c.cz, chunk: inner, seq };
     });
 
     // serialize in parallel using the worker pool (best-effort). Fall back to main-thread serialize on rejection.

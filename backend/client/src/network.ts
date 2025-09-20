@@ -212,7 +212,6 @@ export class NetworkManager {
                       try {
                         const last = this.lastAppliedServerChunkVersion.get(chunkKey);
                         if (typeof version === 'number' && last != null && version <= last) {
-                          if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] Ignoring stale decoded chunk ${chunkKey} version=${version} <= last=${last}`);
                           return;
                         }
                       } catch (e) {}
@@ -267,7 +266,17 @@ export class NetworkManager {
                             // Apply all pending chunk swaps
                             for (const ck of Array.from(this.pendingChunkKeys)) {
                               const cm = this.pendingChunkBlocks.get(ck);
-                              if (cm) this.gameState.chunks.set(ck, cm);
+                              if (!cm) continue;
+                              // store chunk map for consumers that read chunk-level maps
+                              this.gameState.chunks.set(ck, cm);
+                              // Also update legacy per-block map for compatibility (outline, targeting, actions)
+                              try {
+                                for (const [bkey, bval] of cm.entries()) {
+                                  this.gameState.blocks.set(bkey, bval);
+                                }
+                              } catch (e) {
+                                /* swallow to avoid breaking render loop */
+                              }
                             }
                             // bump chunkVersions for all modified chunks
                             for (const ck of Array.from(this.pendingChunkKeys)) {
@@ -329,7 +338,6 @@ export class NetworkManager {
                     try {
                       const last = this.lastAppliedServerChunkVersion.get(chunkKey);
                       if (typeof version === 'number' && last != null && version <= last) {
-                        if (this.debugChunkBumps) console.log(`[CLIENT][DEBUG] Ignoring stale decoded chunk ${chunkKey} version=${version} <= last=${last}`);
                         return;
                       }
                     } catch (e) {}
