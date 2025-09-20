@@ -50,6 +50,19 @@ export class NetworkManager {
   // Queue for incremental block processing to avoid blocking the main thread
   private blocksProcessingQueue: Array<{ blocks: any[]; clearExisting?: boolean }> = [];
   private blocksProcessingRunning: boolean = false;
+  // Adaptive/time-budget processing parameters
+  // start target blocks, will be tuned at runtime
+  private _batchTargetBlocks: number = 4096;
+  private _minBatchBlocks: number = 512;
+  private _maxBatchBlocks: number = 16384;
+  // per-frame time budget in ms (primary stop condition)
+  private _timeBudgetMs: number = 6; // tuneable: aim for ~6ms work per frame
+  // simple smoothing for adaptive adjustments (keeps last N samples)
+  private _frameTimeSamples: number[] = [];
+  private _frameSamplesKeep: number = 8;
+  // Reusable temp structures to reduce allocations
+  private _tmpChunkGroups: Map<string, any[]> | null = null;
+  private _tmpChunkKeys: string[] | null = null;
   // Per-chunk version counters to trigger chunk rebuilds only when necessary
   private chunkVersions: Map<string, number> = new Map();
   // Track last-applied server-sent chunk version per chunk key to avoid applying older updates
@@ -615,9 +628,14 @@ export class NetworkManager {
     }
   }
 
-  // Process queued block arrays in small batches per animation frame
+  // Process queued block arrays using a time-budget per animation frame and adaptive sizing.
+  // Strategy:
+  // - Primary stop condition: elapsed time >= _timeBudgetMs (ms)
+  // - Secondary cap: _batchTargetBlocks (starts at 4096 and adapts based on observed frame times)
+  // - Prioritize chunks close to the player's camera to improve perceived load time
+  // - Reuse temporary structures to avoid allocations
   private processBlocksQueue() {
-    const BATCH_PER_FRAME = 8192; // tuneable: number of blocks processed per frame (recommend 2048-8192)
+    const now = typeof performance !== "undefined" && performance.now ? () => performance.now() : () => Date.now();
 
     const processNextItem = () => {
       const item = this.blocksProcessingQueue.shift();
@@ -627,83 +645,149 @@ export class NetworkManager {
       }
 
       const blocks = item.blocks;
-      let idx = 0;
-      const total = blocks.length;
+      if (!Array.isArray(blocks) || blocks.length === 0) {
+        // nothing to do, continue
+        setTimeout(processNextItem, 0);
+        return;
+      }
 
-      const step = () => {
-        const end = Math.min(idx + BATCH_PER_FRAME, total);
-        for (; idx < end; idx++) {
-          const block = blocks[idx];
+      // Reuse or create temp grouping structures
+      let chunkGroups = this._tmpChunkGroups;
+      let chunkKeys = this._tmpChunkKeys;
+      if (!chunkGroups) {
+        chunkGroups = new Map<string, any[]>();
+        this._tmpChunkGroups = chunkGroups;
+      } else {
+        chunkGroups.clear();
+      }
+      if (!chunkKeys) {
+        chunkKeys = [];
+        this._tmpChunkKeys = chunkKeys;
+      } else {
+        chunkKeys.length = 0;
+      }
+
+      // Group blocks by chunk to allow prioritization and batch apply (minimize Map swaps)
+      for (let i = 0; i < blocks.length; i++) {
+        const b = blocks[i];
+        const cx = Math.floor(b.x / 16);
+        const cy = Math.floor(b.y / 16);
+        const cz = Math.floor(b.z / 16);
+        const ck = `${cx},${cy},${cz}`;
+        let arr = chunkGroups.get(ck);
+        if (!arr) {
+          arr = [];
+          chunkGroups.set(ck, arr);
+          chunkKeys.push(ck);
+        }
+        arr.push(b);
+      }
+
+      // Compute distances for prioritization (closest chunks first)
+      const playerPos = this.gameState.playerPosition;
+      const distances: { key: string; d2: number }[] = [];
+      if (playerPos) {
+        for (const ck of chunkKeys) {
+          const [cxStr, cyStr, czStr] = ck.split(",");
+          const cx = Number(cxStr), cy = Number(cyStr), cz = Number(czStr);
+          // chunk center (approx)
+          const centerX = cx * 16 + 8;
+          const centerY = cy * 16 + 8;
+          const centerZ = cz * 16 + 8;
+          const dx = centerX - playerPos.x;
+          const dy = centerY - playerPos.y;
+          const dz = centerZ - playerPos.z;
+          const d2 = dx * dx + dy * dy + dz * dz;
+          distances.push({ key: ck, d2 });
+        }
+        distances.sort((a, b) => a.d2 - b.d2);
+      } else {
+        // no player position: keep original order
+        for (const ck of chunkKeys) distances.push({ key: ck, d2: 0 });
+      }
+
+      // Processing loop: iterate chunk groups in priority order and apply blocks until budget or cap reached
+      let processed = 0;
+      const start = now();
+      const timeBudget = this._timeBudgetMs;
+      const batchCap = Math.max(this._minBatchBlocks, Math.min(this._batchTargetBlocks, this._maxBatchBlocks));
+
+      for (let i = 0; i < distances.length; i++) {
+        const ck = distances[i].key;
+        const arr = chunkGroups.get(ck)!;
+        // Ensure chunk map exists once per chunk and reuse when applying
+        let chunkMap = this.gameState.chunks.get(ck);
+        if (!chunkMap) {
+          chunkMap = new Map<string, any>();
+          this.gameState.chunks.set(ck, chunkMap);
+        }
+
+        for (let j = 0; j < arr.length; j++) {
+          const block = arr[j];
           const key = getBlockKey(block.x, block.y, block.z);
           // Legacy flat map
           this.gameState.blocks.set(key, block);
-
-          // Chunked storage
-          const cx = Math.floor(block.x / 16);
-          const cy = Math.floor(block.y / 16);
-          const cz = Math.floor(block.z / 16);
-          const chunkKey = `${cx},${cy},${cz}`;
-          if (!this.gameState.chunks.has(chunkKey)) this.gameState.chunks.set(chunkKey, new Map());
-          const chunkMap = this.gameState.chunks.get(chunkKey)!;
+          // Chunked storage: reuse chunkMap reference
           chunkMap.set(key, block);
-          // mark chunk version increased (we'll increase when batch completes to avoid thrashing)
+          processed++;
+
+          // Stop conditions: time budget or cap
+          const elapsed = now() - start;
+          if (elapsed >= timeBudget || processed >= batchCap) {
+            break;
+          }
         }
 
-        // Notify UI of partial progress so meshes/visibility can update gradually
-        this.onStateUpdate({ ...this.gameState });
+        // Early break if budget/cap reached
+        const elapsedTop = now() - start;
+        if (elapsedTop >= timeBudget || processed >= batchCap) break;
+      }
 
-        if (idx < total) {
-          if (typeof window !== "undefined" && (window as any).requestAnimationFrame) {
-            (window as any).requestAnimationFrame(step);
-          } else {
-            setTimeout(step, 16);
-          }
+      // Notify UI of partial progress so meshes/visibility can update gradually
+      this.onStateUpdate({ ...this.gameState });
+
+      // Update chunk versions for modified chunks
+      for (const ck of chunkKeys) {
+        const ver = this.chunkVersions.get(ck) || 0;
+        this.chunkVersions.set(ck, ver + 1);
+      }
+      this.gameState.chunkVersions = new Map(this.chunkVersions);
+
+      // Record frame time sample for adaptive tuning
+      const frameMs = now() - start;
+      this._frameTimeSamples.push(frameMs);
+      if (this._frameTimeSamples.length > this._frameSamplesKeep) this._frameTimeSamples.shift();
+
+      // Adaptive adjustments: simple heuristic
+      const avg = this._frameTimeSamples.reduce((a, b) => a + b, 0) / this._frameTimeSamples.length;
+      if (avg > 12) {
+        // too slow, reduce target
+        this._batchTargetBlocks = Math.max(this._minBatchBlocks, Math.floor(this._batchTargetBlocks * 0.8));
+      } else if (avg < 4) {
+        // under-utilized, increase a bit
+        this._batchTargetBlocks = Math.min(this._maxBatchBlocks, Math.ceil(this._batchTargetBlocks * 1.1));
+      }
+
+      // If there are still blocks left in this item, requeue the remainder at front and yield
+      const remaining = blocks.length - processed;
+      if (remaining > 0) {
+        // Build remainder array and unshift back to queue to continue next frame
+        const rem = blocks.slice(processed);
+        // Put remainder back to front of queue
+        this.blocksProcessingQueue.unshift({ blocks: rem, clearExisting: false });
+        // Schedule next step on next animation frame (yield)
+        if (typeof window !== "undefined" && (window as any).requestAnimationFrame) {
+          (window as any).requestAnimationFrame(() => processNextItem());
         } else {
-          // Visible debug output so we can see processing progress in DevTools
-          // eslint-disable-next-line no-console
-          if (logger && (logger.debug || logger.info)) {
-            // Gate the noisy per-4k-blocks processing message behind logger.debug
-            if (logger.debug) {
-              logger.debug(`[CLIENT] Finished incremental processing of ${total} blocks; chunks=${this.gameState.chunks.size}; blocks=${this.gameState.blocks.size}`);
-            } else {
-              // Fallback to info only if debug isn't available
-              logger.info && logger.info(`[CLIENT] Finished incremental processing of ${total} blocks`);
-            }
-          } else {
-            // As a final fallback, avoid using console.log here to prevent spam.
-          }
-          // Increase chunkVersions for chunks modified by this item so OptimizedWorld can rebuild
-          // We'll scan the processed blocks to find their chunk keys
-          const modifiedChunks = new Set<string>();
-          for (const b of blocks) {
-            const cx = Math.floor(b.x / 16);
-            const cy = Math.floor(b.y / 16);
-            const cz = Math.floor(b.z / 16);
-            modifiedChunks.add(`${cx},${cy},${cz}`);
-          }
-          for (const ck of modifiedChunks) {
-            const ver = this.chunkVersions.get(ck) || 0;
-            this.chunkVersions.set(ck, ver + 1);
-          }
-
-          // Update public chunkVersions and notify UI of final state after finishing the item
-          this.gameState.chunkVersions = new Map(this.chunkVersions);
-          this.onStateUpdate({ ...this.gameState });
-
-          // Finished this item, continue with next in queue after yielding
-          setTimeout(processNextItem, 0);
+          setTimeout(processNextItem, 16);
         }
-      };
-
-      // Start processing this item
-      if (typeof window !== "undefined" && (window as any).requestAnimationFrame) {
-        (window as any).requestAnimationFrame(step);
       } else {
-        setTimeout(step, 0);
+        // Finished this item, continue with next in queue after yielding
+        setTimeout(processNextItem, 0);
       }
     };
 
-    // Kick off queue processing
+    // Kick off processing
     processNextItem();
   }
 
