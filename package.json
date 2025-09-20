@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "start:backend": "cd backend && npm start",
+  "test": "node server/tests/test_reconnect_resume_e2e.js && node server/tests/test_chunkSerializer_seq.js && node server/tests/test_clientStateManager.js",
     "start:server": "cd server && node server.js",
     "start:client": "cd client && npm run dev",
     "dev:backend": "cd backend && npm run dev",

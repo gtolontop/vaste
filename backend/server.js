@@ -52,12 +52,52 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Serve client static files in production
 import path from 'path';
 import { fileURLToPath } from 'url';
+import fs from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Serve client build files
 app.use(express.static(path.join(__dirname, './client/dist')));
+
+// Serve blockpacks (textures and block.json) directly from repo root
+// Serve blockpacks from client public so block definitions and textures live together
+app.use('/blockpacks', express.static(path.join(__dirname, './client/public/blockpacks')));
+
+// Serve pack textures under /blockpacks/:pack/textures/* by proxying to the shared public textures folder
+// This avoids duplicating binary files while allowing per-pack texture URLs like
+// /blockpacks/grass/textures/grass_top.png
+app.use('/blockpacks/:pack/textures', (req, res, next) => {
+  return express.static(path.join(__dirname, './client/public/textures'))(req, res, next);
+});
+
+// Dynamic index for blockpacks: read each pack's block.json and return an array
+// This allows authors to only place per-pack `block.json` files and not maintain a central index.
+app.get('/blockpacks/index.json', (req, res) => {
+  try {
+    const packsDir = path.join(__dirname, './client/public/blockpacks');
+    if (!fs.existsSync(packsDir)) return res.json([]);
+    const children = fs.readdirSync(packsDir, { withFileTypes: true });
+    const out = [];
+    for (const d of children) {
+      if (!d.isDirectory()) continue;
+      const pkgPath = path.join(packsDir, d.name, 'block.json');
+      if (!fs.existsSync(pkgPath)) continue;
+      try {
+        const content = fs.readFileSync(pkgPath, 'utf8');
+        const parsed = JSON.parse(content);
+        out.push(parsed);
+      } catch (fileErr) {
+        console.error(`[SERVER] failed to read/parse block.json for pack '${d.name}' at ${pkgPath}:`, fileErr && fileErr.stack ? fileErr.stack : fileErr);
+        // continue to next pack
+      }
+    }
+    return res.json(out);
+  } catch (e) {
+    console.error('[SERVER] error building blockpacks index', e && e.stack ? e.stack : e);
+    return res.status(500).json({ error: 'failed to build blockpacks index' });
+  }
+});
 
 // Route de santé
 app.get('/health', (req, res) => {

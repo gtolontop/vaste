@@ -1,41 +1,34 @@
-import React, { useRef, useEffect, useState } from 'react';
-import { Canvas, useFrame, useThree } from '@react-three/fiber';
-import { PointerLockControls } from '@react-three/drei';
-import * as THREE from 'three';
-import { NetworkManager } from './network';
-import { GameState, getBlockKey } from './types';
-import { TextureManager } from './TextureManager';
-import { MOVE_CONFIG } from './config/movement';
-import { LoadingScreen, PauseMenu } from './components/ui';
-import { GameHUD } from './components/screens';
-import { OptimizedWorld } from './components/OptimizedWorld';
-import BlockOutline from './components/BlockOutline';
-import { OptimizedRaycaster } from './utils/OptimizedRaycaster';
+import React, { useRef, useEffect, useState } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { PointerLockControls } from "@react-three/drei";
+import * as THREE from "three";
+import { NetworkManager } from "./network";
+import { GameState, getBlockKey } from "./types";
+import { TextureManager } from "./TextureManager";
+import { logger } from "./utils/logger";
+import { MOVE_CONFIG } from "./config/movement";
+import { LoadingScreen, PauseMenu } from "./components/ui";
+import { GameHUD } from "./components/screens";
+import { OptimizedWorld } from "./components/OptimizedWorld";
+import BlockOutline from "./components/BlockOutline";
+import { OptimizedRaycaster } from "./utils/OptimizedRaycaster";
 
 // Block component
-const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({ 
-  position, 
-  blockType = 1 
-}) => {
+const Block: React.FC<{ position: [number, number, number]; blockType?: number }> = ({ position, blockType = 1 }) => {
   const textureManager = TextureManager.getInstance();
   const material = textureManager.createBlockMaterial(blockType);
 
   return (
-    <mesh position={position}>
+    <mesh position={position} material={material as any}>
       <boxGeometry args={[1, 1, 1]} />
-      <primitive object={material} attach="material" />
     </mesh>
   );
 };
 
 // Player component (other players)
-const Player: React.FC<{ position: [number, number, number]; id: string; isCurrentPlayer?: boolean }> = ({ 
-  position, 
-  id, 
-  isCurrentPlayer = false 
-}) => {
+const Player: React.FC<{ position: [number, number, number]; id: string; isCurrentPlayer?: boolean }> = ({ position, id, isCurrentPlayer = false }) => {
   if (isCurrentPlayer) return null; // Don't render current player (first person view)
-  
+
   return (
     <mesh position={[position[0], position[1] + 0.9, position[2]]}>
       <boxGeometry args={[0.6, 1.8, 0.6]} />
@@ -45,17 +38,13 @@ const Player: React.FC<{ position: [number, number, number]; id: string; isCurre
 };
 
 // World component
-const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean; }> = ({ 
-  gameState, 
-  networkManager,
-  isPaused = false
-}) => {
+const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; isPaused?: boolean }> = ({ gameState, networkManager, isPaused = false }) => {
   const { camera, gl } = useThree();
   const controlsRef = useRef<any>(null);
   const [playerPosition, setPlayerPosition] = useState(new THREE.Vector3(0, 10, 0));
   // Bloc visé (pour l'outline)
   const [targetedBlock, setTargetedBlock] = useState<THREE.Vector3 | null>(null);
-  
+
   // Movement configuration is imported from `config/movement.ts`
 
   // Movement state
@@ -66,7 +55,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
     right: false,
     up: false,
     down: false,
-    boost: false // CTRL for speed boost
+    boost: false, // CTRL for speed boost
   });
 
   const velocity = useRef(new THREE.Vector3()); // units per second
@@ -85,7 +74,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       // indicates gameplay focus).
       const isPointerLocked = !!(controlsRef.current && controlsRef.current.isLocked);
       const activeElement = document.activeElement as HTMLElement | null;
-      const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable);
+      const isTyping = activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable);
 
       if (isPointerLocked && !isTyping) {
         // Block common browser shortcuts when pointer locked
@@ -94,38 +83,42 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         // Block function keys and ctrl/meta combos (except single Escape/Tab usage)
         if (ctrlOrMeta || /^F\d{1,2}$/.test(event.code)) {
           // Prevent browser default behavior for these combos
-          try { event.preventDefault(); } catch (e) { /* ignore */ }
+          try {
+            event.preventDefault();
+          } catch (e) {
+            /* ignore */
+          }
         }
       }
-      
+
       switch (event.code) {
-        case 'KeyW':
-        case 'ArrowUp':
+        case "KeyW":
+        case "ArrowUp":
           moveState.current.forward = true;
           break;
-        case 'KeyS':
-        case 'ArrowDown':
+        case "KeyS":
+        case "ArrowDown":
           moveState.current.backward = true;
           break;
-        case 'KeyA':
-        case 'ArrowLeft':
+        case "KeyA":
+        case "ArrowLeft":
           moveState.current.left = true;
           break;
-        case 'KeyD':
-        case 'ArrowRight':
+        case "KeyD":
+        case "ArrowRight":
           moveState.current.right = true;
           break;
-        case 'Space':
+        case "Space":
           moveState.current.up = true;
           event.preventDefault();
           break;
-        case 'ShiftLeft':
-        case 'ShiftRight':
+        case "ShiftLeft":
+        case "ShiftRight":
           // Shift acts as crouch / move down
           moveState.current.down = true;
           break;
-        case 'ControlLeft':
-        case 'ControlRight':
+        case "ControlLeft":
+        case "ControlRight":
           // Control acts as a speed boost modifier
           moveState.current.boost = true;
           break;
@@ -136,49 +129,53 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       if (isPaused) return; // Don't handle movement keys when paused
       const isPointerLocked = !!(controlsRef.current && controlsRef.current.isLocked);
       const activeElement = document.activeElement as HTMLElement | null;
-      const isTyping = activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable);
+      const isTyping = activeElement && (activeElement.tagName === "INPUT" || activeElement.tagName === "TEXTAREA" || activeElement.isContentEditable);
       if (isPointerLocked && !isTyping) {
         if (event.ctrlKey || event.metaKey || /^F\d{1,2}$/.test(event.code)) {
-          try { event.preventDefault(); } catch (e) { /* ignore */ }
+          try {
+            event.preventDefault();
+          } catch (e) {
+            /* ignore */
+          }
         }
       }
       switch (event.code) {
-        case 'KeyW':
-        case 'ArrowUp':
+        case "KeyW":
+        case "ArrowUp":
           moveState.current.forward = false;
           break;
-        case 'KeyS':
-        case 'ArrowDown':
+        case "KeyS":
+        case "ArrowDown":
           moveState.current.backward = false;
           break;
-        case 'KeyA':
-        case 'ArrowLeft':
+        case "KeyA":
+        case "ArrowLeft":
           moveState.current.left = false;
           break;
-        case 'KeyD':
-        case 'ArrowRight':
+        case "KeyD":
+        case "ArrowRight":
           moveState.current.right = false;
           break;
-        case 'Space':
+        case "Space":
           moveState.current.up = false;
           break;
-        case 'ShiftLeft':
-        case 'ShiftRight':
+        case "ShiftLeft":
+        case "ShiftRight":
           moveState.current.down = false;
           break;
-        case 'ControlLeft':
-        case 'ControlRight':
+        case "ControlLeft":
+        case "ControlRight":
           moveState.current.boost = false;
           break;
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    document.addEventListener('keyup', handleKeyUp);
+    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
 
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
-      document.removeEventListener('keyup', handleKeyUp);
+      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
     };
   }, [isPaused]);
 
@@ -190,9 +187,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
     const isReasonablePosition = (x: number, y: number, z: number) => {
       const MAX_COORD = 10000;
       const MIN_COORD = -10000;
-      return x >= MIN_COORD && x <= MAX_COORD &&
-             y >= MIN_COORD && y <= MAX_COORD &&
-             z >= MIN_COORD && z <= MAX_COORD;
+      return x >= MIN_COORD && x <= MAX_COORD && y >= MIN_COORD && y <= MAX_COORD && z >= MIN_COORD && z <= MAX_COORD;
     };
 
     // Pour l'outline : update à chaque frame
@@ -203,6 +198,16 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         animationFrameId = requestAnimationFrame(updateTargetedBlock);
         return;
       }
+      {
+        /* Debug overlay - quick visibility of counts */
+      }
+      <div style={{ position: "absolute", left: 8, top: 8, zIndex: 9999, color: "#fff", background: "rgba(0,0,0,0.4)", padding: "6px 8px", borderRadius: 6, fontSize: 12 }}>
+        <div>Blocks: {gameState.blocks.size}</div>
+        <div>Chunks: {gameState.chunks.size}</div>
+        <div>ChunkVersions: {gameState.chunkVersions.size}</div>
+        <div>Connected: {gameState.connected ? "yes" : "no"}</div>
+      </div>;
+
       const raycastResult = optimizedRaycaster.raycastBlocks(camera, gameState.blocks, playerPosition, 8);
       if (raycastResult) {
         setTargetedBlock(raycastResult.blockPos.clone());
@@ -225,10 +230,10 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         // Left click - break block
         if (isReasonablePosition(blockX, blockY, blockZ)) {
           const actionId = (networkManager as any).sendBlockAction({
-            type: 'break_block',
+            type: "break_block",
             x: blockX,
             y: blockY,
-            z: blockZ
+            z: blockZ,
           });
           // Optionally we could track actionId in UI for undo/feedback
         }
@@ -241,20 +246,20 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
           const existingBlockKey = getBlockKey(placeX, placeY, placeZ);
           if (!gameState.blocks.has(existingBlockKey)) {
             const actionId = (networkManager as any).sendBlockAction({
-              type: 'place_block',
+              type: "place_block",
               x: placeX,
               y: placeY,
               z: placeZ,
-              blockType: 1
+              blockType: 1,
             });
           }
         }
       }
     };
-    gl.domElement.addEventListener('mousedown', handleClick);
-    gl.domElement.addEventListener('contextmenu', (e) => e.preventDefault());
+    gl.domElement.addEventListener("mousedown", handleClick);
+    gl.domElement.addEventListener("contextmenu", (e) => e.preventDefault());
     return () => {
-      gl.domElement.removeEventListener('mousedown', handleClick);
+      gl.domElement.removeEventListener("mousedown", handleClick);
       cancelAnimationFrame(animationFrameId);
     };
   }, [camera, gl, gameState.blocks, networkManager, isPaused, playerPosition]);
@@ -308,23 +313,19 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
         velocity.current.add(diff.normalize().multiplyScalar(maxStep));
       }
 
-  // Apply translation: velocity is units/sec, so multiply by delta
-  camera.position.add(velocity.current.clone().multiplyScalar(delta));
+      // Apply translation: velocity is units/sec, so multiply by delta
+      camera.position.add(velocity.current.clone().multiplyScalar(delta));
 
       // Update player position tracking
-      const newPos = new THREE.Vector3(
-        camera.position.x,
-        camera.position.y,
-        camera.position.z
-      );
+      const newPos = new THREE.Vector3(camera.position.x, camera.position.y, camera.position.z);
       setPlayerPosition(newPos);
 
       // Send movement update to server
       networkManager.sendMessage({
-        type: 'player_move',
+        type: "player_move",
         x: newPos.x,
         y: newPos.y,
-        z: newPos.z
+        z: newPos.z,
       });
 
       // no debug callback — movement debug overlay removed
@@ -345,7 +346,7 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       camera.position.set(x, y, z);
       setPlayerPosition(new THREE.Vector3(x, y, z));
     };
-    
+
     return () => {
       networkManager.onTeleport = undefined;
     };
@@ -360,54 +361,39 @@ const World: React.FC<{ gameState: GameState; networkManager: NetworkManager; is
       {/* Controls */}
       <PointerLockControls ref={controlsRef} />
 
-
       {/* Render optimized world */}
-      <OptimizedWorld 
-        blocks={gameState.blocks}
-        playerPosition={playerPosition}
-      />
+      <OptimizedWorld chunks={(gameState as any).chunks} chunkVersions={(gameState as any).chunkVersions} playerPosition={playerPosition} />
 
       {/* Outline du bloc visé */}
-      {targetedBlock && (
-        <BlockOutline position={[targetedBlock.x, targetedBlock.y, targetedBlock.z]} color="#ffffff" />
-      )}
+      {targetedBlock && <BlockOutline position={[targetedBlock.x, targetedBlock.y, targetedBlock.z]} color="#ffffff" />}
 
       {/* Render other players */}
       {Array.from(gameState.players.values()).map((player) => (
-        <Player
-          key={player.id}
-          id={player.id}
-          position={[player.x, player.y, player.z]}
-          isCurrentPlayer={player.id === gameState.playerId}
-        />
+        <Player key={player.id} id={player.id} position={[player.x, player.y, player.z]} isCurrentPlayer={player.id === gameState.playerId} />
       ))}
     </>
   );
 };
 
 // Main Game component
-const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void }> = ({ 
-  networkManager, 
-  onDisconnect 
-}) => {
+const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void }> = ({ networkManager, onDisconnect }) => {
   const [gameState, setGameState] = useState<GameState>(networkManager.getGameState());
   const [texturesLoaded, setTexturesLoaded] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  
 
   // Handle Escape key for pause menu
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Escape') {
+      if (event.code === "Escape") {
         event.preventDefault();
-        setIsPaused(prev => !prev);
+        setIsPaused((prev) => !prev);
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    
+    document.addEventListener("keydown", handleKeyDown);
+
     return () => {
-      document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener("keydown", handleKeyDown);
     };
   }, []);
 
@@ -416,18 +402,25 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
     const loadTextures = async () => {
       const textureManager = TextureManager.getInstance();
       const startTime = Date.now();
-      
+
       try {
-        await textureManager.preloadTextures();
-        console.log('Textures loaded successfully');
+        await textureManager.loadBlockDefinitions();
+        await textureManager.preloadTexturesFromRegistry();
+        try {
+          await textureManager.buildAtlas(32);
+          logger.info("Texture atlas built");
+        } catch (e) {
+          logger.warn("Failed to build atlas, falling back to per-texture materials");
+        }
+        logger.info("Block definitions and textures loaded successfully");
       } catch (error) {
-        console.warn('Some textures failed to load, using fallback colors');
+        logger.warn("Some textures failed to load, using fallback colors");
       }
-      
+
       // Ensure minimum loading time of 1 second
       const elapsedTime = Date.now() - startTime;
       const remainingTime = Math.max(0, 1000 - elapsedTime);
-      
+
       setTimeout(() => {
         setTexturesLoaded(true);
       }, remainingTime);
@@ -464,53 +457,43 @@ const Game: React.FC<{ networkManager: NetworkManager; onDisconnect: () => void 
   };
 
   const fullscreenButtonStyle: React.CSSProperties = {
-    position: 'absolute',
-    top: '1rem',
-    right: '1rem',
+    position: "absolute",
+    top: "1rem",
+    right: "1rem",
     zIndex: 1000,
-    padding: '0.5rem',
-    background: 'rgba(0, 0, 0, 0.7)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: '4px',
-    cursor: 'pointer',
-    fontSize: '1.2rem',
-    width: '40px',
-    height: '40px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
+    padding: "0.5rem",
+    background: "rgba(0, 0, 0, 0.7)",
+    color: "#fff",
+    border: "none",
+    borderRadius: "4px",
+    cursor: "pointer",
+    fontSize: "1.2rem",
+    width: "40px",
+    height: "40px",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
   };
 
   return (
-    <div style={{ width: '100vw', height: '100vh', position: 'relative', overflow: 'hidden' }}>
-      {!texturesLoaded && (
-        <LoadingScreen message="Loading textures..." overlay />
-      )}
-      
-      <button 
-        style={fullscreenButtonStyle}
-        onClick={handleFullscreen}
-        title="Toggle Fullscreen"
-      >
+    <div style={{ width: "100vw", height: "100vh", position: "relative", overflow: "hidden" }}>
+      {!texturesLoaded && <LoadingScreen message="Loading textures..." overlay />}
+
+      <button style={fullscreenButtonStyle} onClick={handleFullscreen} title="Toggle Fullscreen">
         ⛶
       </button>
-      
-      <Canvas
-        camera={{ fov: 75, near: 0.1, far: 1000 }}
-        style={{ background: '#87CEEB', width: '100%', height: '100%' }}
-      >
+
+      <Canvas camera={{ fov: 75, near: 0.1, far: 1000 }} style={{ background: "#87CEEB", width: "100%", height: "100%" }}>
+        {/* Add simple scene lighting to ensure meshes are visible */}
+        <ambientLight intensity={0.9} />
+        <directionalLight position={[50, 100, 20]} intensity={0.6} />
         <World gameState={gameState} networkManager={networkManager} isPaused={isPaused} />
       </Canvas>
       {/* Game HUD */}
       <GameHUD gameState={gameState} />
-      
+
       {/* Pause Menu */}
-      <PauseMenu
-        isOpen={isPaused}
-        onResume={handleResume}
-        onDisconnect={handleDisconnect}
-      />
+      <PauseMenu isOpen={isPaused} onResume={handleResume} onDisconnect={handleDisconnect} />
     </div>
   );
 };

@@ -1,16 +1,10 @@
-import { 
-  LoginCredentials, 
-  RegisterCredentials, 
-  AuthResponse, 
-  User, 
-  ServersResponse 
-} from './auth.types';
+import { LoginCredentials, RegisterCredentials, AuthResponse, User, ServersResponse } from "./auth.types";
 
-const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || 'http://localhost:8080';
+const BACKEND_URL = (import.meta as any).env?.VITE_BACKEND_URL || "http://localhost:8080";
 
 class AuthService {
   private static instance: AuthService;
-  
+
   public static getInstance(): AuthService {
     if (!AuthService.instance) {
       AuthService.instance = new AuthService();
@@ -20,37 +14,37 @@ class AuthService {
 
   // Local token storage
   private getToken(): string | null {
-    return localStorage.getItem('vaste_token');
+    return localStorage.getItem("vaste_token");
   }
 
   private setToken(token: string): void {
-    localStorage.setItem('vaste_token', token);
+    localStorage.setItem("vaste_token", token);
   }
 
   private removeToken(): void {
-    localStorage.removeItem('vaste_token');
+    localStorage.removeItem("vaste_token");
   }
 
   // Local user storage
   private getStoredUser(): User | null {
-    const userData = localStorage.getItem('vaste_user');
+    const userData = localStorage.getItem("vaste_user");
     return userData ? JSON.parse(userData) : null;
   }
 
   private setStoredUser(user: User): void {
-    localStorage.setItem('vaste_user', JSON.stringify(user));
+    localStorage.setItem("vaste_user", JSON.stringify(user));
   }
 
   private removeStoredUser(): void {
-    localStorage.removeItem('vaste_user');
+    localStorage.removeItem("vaste_user");
   }
 
   // Get headers with authentication
   private getAuthHeaders(): HeadersInit {
     const token = this.getToken();
     return {
-      'Content-Type': 'application/json',
-      ...(token && { 'Authorization': `Bearer ${token}` })
+      "Content-Type": "application/json",
+      ...(token && { Authorization: `Bearer ${token}` }),
     };
   }
 
@@ -58,9 +52,9 @@ class AuthService {
   async register(credentials: RegisterCredentials): Promise<AuthResponse> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
       });
 
       const data: AuthResponse = await response.json();
@@ -72,10 +66,10 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Registration error:', error);
+      console.error("[AUTH] Registration error:", error);
       return {
         success: false,
-        message: 'Server connection error'
+        message: "Server connection error",
       };
     }
   }
@@ -84,9 +78,9 @@ class AuthService {
   async login(credentials: LoginCredentials): Promise<AuthResponse> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(credentials)
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
       });
 
       const data: AuthResponse = await response.json();
@@ -98,10 +92,10 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Login error:', error);
+      console.error("[AUTH] Login error:", error);
       return {
         success: false,
-        message: 'Server connection error'
+        message: "Server connection error",
       };
     }
   }
@@ -111,11 +105,11 @@ class AuthService {
     try {
       // Optional API logout call
       await fetch(`${BACKEND_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: this.getAuthHeaders()
+        method: "POST",
+        headers: this.getAuthHeaders(),
       });
     } catch (error) {
-      console.error('[AUTH] Logout error:', error);
+      console.error("[AUTH] Logout error:", error);
     } finally {
       // Local cleanup
       this.removeToken();
@@ -130,7 +124,7 @@ class AuthService {
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/verify`, {
-        headers: this.getAuthHeaders()
+        headers: this.getAuthHeaders(),
       });
 
       const data: AuthResponse = await response.json();
@@ -145,7 +139,7 @@ class AuthService {
         return null;
       }
     } catch (error) {
-      console.error('[AUTH] Token verification error:', error);
+      console.error("[AUTH] Token verification error:", error);
       this.removeToken();
       this.removeStoredUser();
       return null;
@@ -156,7 +150,7 @@ class AuthService {
   async getProfile(): Promise<User | null> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/profile`, {
-        headers: this.getAuthHeaders()
+        headers: this.getAuthHeaders(),
       });
 
       const data: AuthResponse = await response.json();
@@ -168,18 +162,18 @@ class AuthService {
 
       return null;
     } catch (error) {
-      console.error('[AUTH] Profile retrieval error:', error);
+      console.error("[AUTH] Profile retrieval error:", error);
       return null;
     }
   }
 
   // Profile update
-  async updateProfile(userData: Partial<Pick<User, 'username' | 'email'>>): Promise<AuthResponse> {
+  async updateProfile(userData: Partial<Pick<User, "username" | "email">>): Promise<AuthResponse> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/profile`, {
-        method: 'PUT',
+        method: "PUT",
         headers: this.getAuthHeaders(),
-        body: JSON.stringify(userData)
+        body: JSON.stringify(userData),
       });
 
       const data: AuthResponse = await response.json();
@@ -190,10 +184,10 @@ class AuthService {
 
       return data;
     } catch (error) {
-      console.error('[AUTH] Profile update error:', error);
+      console.error("[AUTH] Profile update error:", error);
       return {
         success: false,
-        message: 'Server connection error'
+        message: "Server connection error",
       };
     }
   }
@@ -202,17 +196,17 @@ class AuthService {
   async changePassword(currentPassword: string, newPassword: string): Promise<AuthResponse> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/auth/password`, {
-        method: 'PUT',
+        method: "PUT",
         headers: this.getAuthHeaders(),
-        body: JSON.stringify({ currentPassword, newPassword })
+        body: JSON.stringify({ currentPassword, newPassword }),
       });
 
       return await response.json();
     } catch (error) {
-      console.error('[AUTH] Password change error:', error);
+      console.error("[AUTH] Password change error:", error);
       return {
         success: false,
-        message: 'Server connection error'
+        message: "Server connection error",
       };
     }
   }
@@ -221,15 +215,15 @@ class AuthService {
   async getPublicServers(): Promise<ServersResponse> {
     try {
       const response = await fetch(`${BACKEND_URL}/api/servers`, {
-        headers: this.getAuthHeaders()
+        headers: this.getAuthHeaders(),
       });
 
       return await response.json();
     } catch (error) {
-      console.error('[AUTH] Servers retrieval error:', error);
+      console.error("[AUTH] Servers retrieval error:", error);
       return {
         success: false,
-        message: 'Server connection error'
+        message: "Server connection error",
       };
     }
   }

@@ -3,6 +3,11 @@
  */
 
 const { VasteWorld, VasteVector3 } = require('../types');
+const path = require('path');
+const { WorldRuntime } = require('./world_runtime');
+
+// Runtime singleton for persisted worlds
+const worldRuntime = new WorldRuntime();
 
 class WorldManager {
     constructor() {
@@ -21,6 +26,17 @@ class WorldManager {
         return world;
     }
 
+    // New API: create or load a persisted world stored under `worldPath` (absolute or relative to mod root)
+    // worldPath should point to a folder where 'chunks/' and 'world.json' will be stored
+    createOrLoadWorld(worldPath, options = {}) {
+        // Resolve absolute path if relative
+        const absPath = path.isAbsolute(worldPath) ? worldPath : path.join(process.cwd(), worldPath);
+        const w = worldRuntime.createOrLoadWorld(absPath, options);
+        // set as activeWorld so server can query blocks and spawnPoint
+        this.activeWorld = w;
+        return w;
+    }
+
     getWorld(worldId) {
         return this.worlds.get(worldId);
     }
@@ -34,7 +50,8 @@ class WorldManager {
     }
 
     fillBlocksInWorld(world, startPos, endPos, blockType = 1) {
-        if (!world instanceof VasteWorld) {
+        // Accept either legacy VasteWorld instances or any object that implements setBlock(x,y,z,blockType)
+        if (!world || typeof world.setBlock !== 'function') {
             throw new Error('Invalid world object');
         }
 
@@ -42,9 +59,10 @@ class WorldManager {
         const startY = Math.max(0, Math.min(startPos.y, endPos.y));
         const startZ = Math.max(0, Math.min(startPos.z, endPos.z));
         
-        const endX = Math.min(world.width - 1, Math.max(startPos.x, endPos.x));
-        const endY = Math.min(world.height - 1, Math.max(startPos.y, endPos.y));
-        const endZ = Math.min(world.depth - 1, Math.max(startPos.z, endPos.z));
+    // For persisted/infinite worlds, we don't clamp to width/height/depth
+    const endX = Math.max(startPos.x, endPos.x);
+    const endY = Math.max(startPos.y, endPos.y);
+    const endZ = Math.max(startPos.z, endPos.z);
 
         for (let x = startX; x <= endX; x++) {
             for (let y = startY; y <= endY; y++) {
