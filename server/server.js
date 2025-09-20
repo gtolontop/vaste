@@ -14,6 +14,12 @@ const PORT = process.env.PORT || 25565;
 const CHUNK_ACK_TIMEOUT_MS = 5000; // default resend if not acked within 5s
 const CHUNK_MAX_RETRIES = 5; // default max retries before drop
 
+// Batch sizing (in bytes) for chunk envelopes
+const DEFAULT_MAX_BATCH_BYTES = 256 * 1024; // 256 KB default target per envelope
+const MIN_BATCH_BYTES = 16 * 1024; // 16 KB minimum target
+const MAX_BATCH_BYTES = 1024 * 1024; // 1 MB maximum target
+
+
 // Logging utility
 function log(message, level = "INFO") {
   const timestamp = new Date().toLocaleString("fr-FR", {
@@ -1043,69 +1049,94 @@ class GameServer {
     try {
       const serialized = await Promise.all(serializePromises);
       // If this is the initial bulk load, bundle multiple chunk buffers into larger envelopes
-      if (initial) {
-        const BATCH_SIZE = 27; // tuneable: how many chunks per envelope
-        for (let i = 0; i < serialized.length; i += BATCH_SIZE) {
-          const slice = serialized.slice(i, i + BATCH_SIZE).filter((s) => s);
-          if (slice.length === 0) continue;
-          // build envelope: [uint8 msgType=2][uint32 count][uint32 len][chunk...]
+      // Use adaptive byte-limited batching instead of fixed BATCH_SIZE count to handle variable-sized chunks.
+      const playerBatchTarget = player.batchTargetBytes || DEFAULT_MAX_BATCH_BYTES;
+
+      function buildEnvelopesByBytes(serializedArr, targetBytes, smallBatchBytesForTop) {
+        // Returns array of { chunkKeys: [...], buffer: ArrayBuffer }
+        const envelopes = [];
+        let i = 0;
+        const total = serializedArr.length;
+        // Optionally handle top N with smaller target to reduce latency for nearest chunks
+        const smallTopN = smallBatchBytesForTop ? Math.max(1, Math.floor(serializedArr.length * 0.15)) : 0; // top 15% prioritized
+
+        while (i < total) {
+          const isTop = i < smallTopN;
+          const cap = isTop && smallBatchBytesForTop ? Math.max(MIN_BATCH_BYTES, Math.min(smallBatchBytesForTop, MAX_BATCH_BYTES)) : Math.max(MIN_BATCH_BYTES, Math.min(targetBytes, MAX_BATCH_BYTES));
+          // start a new envelope
+          let entries = [];
+          let bytesAccum = 1 + 4; // msgType + count
+          while (i < total) {
+            const s = serializedArr[i];
+            if (!s) { i++; continue; }
+            const entryOverhead = 4; // uint32 length prefix per chunk
+            const entrySize = entryOverhead + (s.buffer ? s.buffer.byteLength : 0);
+            // if single chunk exceeds cap and we have no entries yet, send it alone
+            if (entries.length === 0 && entrySize + bytesAccum > cap) {
+              entries.push(s);
+              i++;
+              break;
+            }
+            if (bytesAccum + entrySize > cap) break;
+            entries.push(s);
+            bytesAccum += entrySize;
+            i++;
+          }
+          if (entries.length === 0) {
+            // nothing could fit; force one
+            const s = serializedArr[i];
+            if (s) entries.push(s);
+            i++;
+          }
+          // Build envelope buffer
           let totalLen = 1 + 4; // msgType + count
-          for (const s of slice) totalLen += 4 + s.buffer.byteLength;
+          for (const s of entries) totalLen += 4 + (s.buffer ? s.buffer.byteLength : 0);
           const env = new ArrayBuffer(totalLen);
           const dv = new DataView(env);
           let off = 0;
-          dv.setUint8(off, 2);
-          off += 1; // CHUNK_BATCH
-          dv.setUint32(off, slice.length, true);
-          off += 4;
-          for (const s of slice) {
-            dv.setUint32(off, s.buffer.byteLength, true);
-            off += 4;
-            const target = new Uint8Array(env, off, s.buffer.byteLength);
-            target.set(new Uint8Array(s.buffer));
-            off += s.buffer.byteLength;
-          }
-          // create per-chunk keys and register outstanding entries mapping to this envelope buffer
-          const ackTimeoutBase = (this.options && this.options.chunkAckTimeoutMs) || CHUNK_ACK_TIMEOUT_MS;
+          dv.setUint8(off, 2); off += 1; // CHUNK_BATCH
+          dv.setUint32(off, entries.length, true); off += 4;
           const chunkKeys = [];
-          for (const s of slice) {
-            const chunkKey = `${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`;
-            chunkKeys.push(chunkKey);
+          for (const s of entries) {
+            const len = s.buffer ? s.buffer.byteLength : 0;
+            dv.setUint32(off, len, true); off += 4;
+            if (len > 0) {
+              const target = new Uint8Array(env, off, len);
+              target.set(new Uint8Array(s.buffer));
+              off += len;
+            }
+            chunkKeys.push(`${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`);
           }
-          // Enqueue the envelope (chunkKey is array to indicate batch)
-          player.sendQueue.push({ chunkKey: chunkKeys, buffer: env, enqueuedAt: Date.now() });
+          envelopes.push({ chunkKeys, buffer: env });
         }
-      } else {
-        // For non-initial sends we also group chunks into batch envelopes to reduce per-message overhead.
-        const BATCH_SIZE = 8;
-        for (let i = 0; i < serialized.length; i += BATCH_SIZE) {
-          const slice = serialized.slice(i, i + BATCH_SIZE).filter((s) => s);
-          if (slice.length === 0) continue;
-          // build envelope: [uint8 msgType=2][uint32 count][uint32 len][chunk...]
-          let totalLen = 1 + 4;
-          for (const s of slice) totalLen += 4 + s.buffer.byteLength;
-          const env = new ArrayBuffer(totalLen);
-          const dv = new DataView(env);
-          let off = 0;
-          dv.setUint8(off, 2);
-          off += 1; // CHUNK_BATCH
-          dv.setUint32(off, slice.length, true);
-          off += 4;
-          for (const s of slice) {
-            dv.setUint32(off, s.buffer.byteLength, true);
-            off += 4;
-            const target = new Uint8Array(env, off, s.buffer.byteLength);
-            target.set(new Uint8Array(s.buffer));
-            off += s.buffer.byteLength;
-          }
-          const chunkKeys = [];
-          for (const s of slice) {
-            const chunkKey = `${s.cx},${s.cy},${s.cz}:${1}:${s.seq}`;
-            chunkKeys.push(chunkKey);
-          }
-          player.sendQueue.push({ chunkKey: chunkKeys, buffer: env, enqueuedAt: Date.now() });
-        }
+        return envelopes;
       }
+
+      // For initial load: prefer smaller batches for top-priority chunks to reduce perceivable latency
+      const smallTopBytes = Math.max(MIN_BATCH_BYTES, Math.min(Math.floor(playerBatchTarget / 4), 64 * 1024)); // top-priority target
+      const envelopes = buildEnvelopesByBytes(serialized, playerBatchTarget, smallTopBytes);
+      for (const env of envelopes) {
+        player.sendQueue.push({ chunkKey: env.chunkKeys, buffer: env.buffer, enqueuedAt: Date.now() });
+      }
+
+      // Adaptive tuning: observe serialization duration and outstanding size to adapt batch target
+      try {
+        const serTimes = serialized.filter(Boolean).map((s) => s.serializeMs || 0).filter((v) => v > 0);
+        if (serTimes.length > 0) {
+          const avgSer = serTimes.reduce((a, b) => a + b, 0) / serTimes.length;
+          // if serialization is slow, reduce batch size to improve latency; if fast, increase slightly for throughput
+          if (!player.batchTargetBytes) player.batchTargetBytes = DEFAULT_MAX_BATCH_BYTES;
+          if (avgSer > 100) {
+            player.batchTargetBytes = Math.max(MIN_BATCH_BYTES, Math.floor(player.batchTargetBytes * 0.7));
+          } else if (avgSer < 20) {
+            player.batchTargetBytes = Math.min(MAX_BATCH_BYTES, Math.floor(player.batchTargetBytes * 1.15));
+          }
+        }
+        // Also reduce if the player's outstandingChunks is large (backpressure)
+        if (player.outstandingChunks && player.outstandingChunks.size > (player.maxOutstanding || 16)) {
+          player.batchTargetBytes = Math.max(MIN_BATCH_BYTES, Math.floor((player.batchTargetBytes || DEFAULT_MAX_BATCH_BYTES) * 0.8));
+        }
+      } catch (e) {}
       // Debug: log how many items were enqueued for sending (helpful in headless tests)
       try {
         log(`Enqueued ${player.sendQueue.length} sendQueue items for player ${playerId} (initial=${initial})`);
