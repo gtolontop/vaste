@@ -145,8 +145,11 @@ const RegisterPage: React.FC = () => {
     setAuthError("");
 
     try {
-      await register(formData.username.trim(), formData.email.trim(), formData.password);
-      navigate("/");
+      const result = await register(formData.username.trim(), formData.email.trim(), formData.password);
+      if (!result.success) {
+        setAuthError(result.message || "Registration failed");
+      }
+      // Navigation will happen automatically via useEffect when authenticated
     } catch (error: any) {
       setAuthError(error.message || "Registration failed");
     } finally {
