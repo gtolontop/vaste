@@ -1,4 +1,4 @@
-{
+ {
   "name": "GetPlayerEntity",
   "category": "Entity Management",
   "description": "Retrieves the entity object for a specific player. Entity objects are used to manipulate player position, world assignment, and other properties.",
