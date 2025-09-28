@@ -65,8 +65,11 @@ export class User {
     const db = getDB();
     
     try {
+      // Normalize email to lowercase
+      email = email.toLowerCase();
+      
       const [users] = await db.execute(
-        'SELECT * FROM users WHERE email = ? AND is_active = 1',
+        'SELECT * FROM users WHERE LOWER(email) = LOWER(?) AND is_active = 1',
         [email]
       );
 
