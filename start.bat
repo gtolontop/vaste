@@ -6,8 +6,8 @@ echo.
 
 REM Kill any existing processes
 echo Cleaning up any existing processes...
-taskkill /F /IM node.exe 2>nul
-timeout /t 2 /nobreak > nul
+echo taskkill /F /IM node.exe 2>nul
+echo timeout /t 2 /nobreak > nul
 
 echo Installing dependencies...
 cd /d "%~dp0"

@@ -21,9 +21,12 @@ export class User {
     const db = getDB();
     
     try {
+      // Normalize email to lowercase
+      email = email.toLowerCase();
+      
       // Check if user already exists
       const [existingUsers] = await db.execute(
-        'SELECT id FROM users WHERE email = ? OR username = ?',
+        'SELECT id FROM users WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)',
         [email, username]
       );
 
