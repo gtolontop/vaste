@@ -40,6 +40,20 @@ async function testDatabase() {
         [testEmail]
       );
       console.log('Found by case-insensitive email:', foundByEmailCase);
+      
+      // Check with is_active condition (like in User.findByEmail)
+      const [foundWithActive] = await connection.execute(
+        'SELECT id, username, email, is_active FROM users WHERE email = ? AND is_active = 1',
+        [testEmail]
+      );
+      console.log('Found with is_active = 1:', foundWithActive);
+      
+      // Check the actual is_active value
+      const [checkActive] = await connection.execute(
+        'SELECT id, username, email, is_active FROM users WHERE email = ?',
+        [testEmail]
+      );
+      console.log('User is_active status:', checkActive);
     }
     
   } catch (error) {
