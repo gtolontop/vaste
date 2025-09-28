@@ -125,8 +125,13 @@ const RegisterPage: React.FC = () => {
       setAuthError("Passwords do not match");
       return false;
     }
-    if (formData.password.length < 6) {
-      setAuthError("Password must be at least 6 characters long");
+    if (formData.password.length < 8) {
+      setAuthError("Password must be at least 8 characters long");
+      return false;
+    }
+    // Check password complexity
+    if (!/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(formData.password)) {
+      setAuthError("Password must contain at least one lowercase letter, one uppercase letter, and one number");
       return false;
     }
     return true;
