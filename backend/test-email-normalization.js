@@ -1,4 +1,4 @@
-import validator from 'express-validator';
+import validator from 'validator';
 import { connectDB, getDB } from './src/config/database.js';
 import dotenv from 'dotenv';
 
@@ -19,7 +19,7 @@ async function testEmailNormalization() {
   console.log('Testing email normalization...\n');
   
   for (const email of testEmails) {
-    // Normalize using express-validator's normalizeEmail
+    // Normalize using validator's normalizeEmail (same as express-validator uses)
     const normalized = validator.normalizeEmail(email);
     console.log(`Original: ${email}`);
     console.log(`Normalized: ${normalized}`);
