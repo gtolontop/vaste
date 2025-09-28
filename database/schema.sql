@@ -2,8 +2,8 @@
 -- MySQL Database Schema for user management, game servers, and world data
 
 -- Create database if not exists
-CREATE DATABASE IF NOT EXISTS vaste_db;
-USE vaste_db;
+CREATE DATABASE IF NOT EXISTS vaste_backend;
+USE vaste_backend;
 
 -- Set character encoding
 SET NAMES utf8mb4;
