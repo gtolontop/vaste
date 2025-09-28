@@ -32,7 +32,7 @@ export class GameServer {
   }
 
   // Create new game server
-  static async create({ name, description, host, port, websocket_url, max_players, owner_id, is_public = true, version = '1.0.0', tags = '' }) {
+  static async create({ name, description, host, port, websocket_url, max_players, owner_id, is_public = true, version = '1.0.0', tags = [] }) {
     const db = getDB();
     
     try {
@@ -48,7 +48,7 @@ export class GameServer {
       const [result] = await db.execute(
         `INSERT INTO game_servers (uuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags, license_key, license_expires_at, is_license_active, created_at, updated_at, is_online, current_players) 
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW(), 0, 0)`,
-        [serverUuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags, licenseKey, licenseExpiresAt]
+        [serverUuid, name, description, host, port, websocket_url, max_players, owner_id, is_public, version, tags ? JSON.stringify(tags) : null, licenseKey, licenseExpiresAt]
       );
 
       // Get created server
