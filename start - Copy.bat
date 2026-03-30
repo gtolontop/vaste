@@ -1,11 +1,4 @@
 @echo off
-echo ====================================
-echo        Vaste Unified Platform
-echo ====================================
-echo.
-
-
-
 echo.
 echo ====================================
 echo    Starting...
